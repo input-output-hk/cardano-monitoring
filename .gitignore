@@ -1,0 +1,7 @@
+.direnv/
+.gcroots
+treefmt.toml
+*.tf.json
+cloudformation.*.json
+.terraform*
+.ssh_*
