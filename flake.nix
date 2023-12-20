@@ -11,12 +11,22 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixos-23.11";
     sops-nix.url = "github:Mic92/sops-nix";
     terranix.url = "github:terranix/terranix";
-    treefmt-nix.url = "github:numtide/treefmt-nix";
-    treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
-    opentofu-registry.url = "github:opentofu/registry-stable";
-    opentofu-registry.flake = false;
-    cardano-playground.url = "github:input-output-hk/cardano-playground";
-    cardano-playground.flake = false;
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    opentofu-registry = {
+      url = "github:opentofu/registry-stable";
+      flake = false;
+    };
+    cardano-playground = {
+      url = "github:input-output-hk/cardano-playground";
+      flake = false;
+    };
+    cardano-mainnet = {
+      url = "git+ssh://git@github.com/input-output-hk/cardano-mainnet.git";
+      flake = false;
+    };
   };
 
   outputs = inputs: let

@@ -55,14 +55,30 @@
         "type": "github"
       }
     },
+    "cardano-mainnet": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1702581534,
+        "narHash": "sha256-3blv4ZU4YfH04jeYgMRYefnAb1K0PAGAQoelFNQSo8s=",
+        "ref": "refs/heads/main",
+        "rev": "d1d9de35e4be1a7bb19bb168894fec64d10cf2fd",
+        "revCount": 32,
+        "type": "git",
+        "url": "ssh://git@github.com/input-output-hk/cardano-mainnet.git"
+      },
+      "original": {
+        "type": "git",
+        "url": "ssh://git@github.com/input-output-hk/cardano-mainnet.git"
+      }
+    },
     "cardano-playground": {
       "flake": false,
       "locked": {
-        "lastModified": 1702339620,
-        "narHash": "sha256-bmqR35O5DxNGqNXU3XFfBjGH/fd/UOusYa3j8sY7rVg=",
+        "lastModified": 1702580443,
+        "narHash": "sha256-eyaBnLOiGcOQ7wrjFKnjfuFScsqKs9vDIrFl1ojVSiQ=",
         "owner": "input-output-hk",
         "repo": "cardano-playground",
-        "rev": "66d677b53005b3223e4b1b03d72685d499021897",
+        "rev": "c9110c51e6bd9fd03dfbd2148a5caae3299c420e",
         "type": "github"
       },
       "original": {
@@ -400,6 +416,7 @@
     "root": {
       "inputs": {
         "auth-keys-hub": "auth-keys-hub",
+        "cardano-mainnet": "cardano-mainnet",
         "cardano-playground": "cardano-playground",
         "colmena": "colmena",
         "flake-parts": "flake-parts_2",

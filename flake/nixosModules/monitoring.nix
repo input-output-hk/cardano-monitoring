@@ -16,7 +16,7 @@
     sops.secrets.grafana-oauth-client-id = ownerGrafana ../../secrets/grafana-oauth-client-id.enc;
     sops.secrets.grafana-oauth-client-secret = ownerGrafana ../../secrets/grafana-oauth-client-secret.enc;
     sops.secrets.mimir-token.sopsFile = ../../secrets/mimir-token.enc;
-    sops.secrets.caddy-environment.sopsFile = ../../secrets/caddy-environment.enc;
+    sops.secrets."caddy-environment-${name}".sopsFile = ../../secrets + "/caddy-environment-${name}.enc";
 
     services.grafana = {
       enable = true;
@@ -67,6 +67,7 @@
               type = "prometheus";
               name = "Mimir";
               uid = "mimir";
+              isDefault = true;
               url = "http://127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}/mimir/prometheus";
             }
             {
@@ -159,29 +160,33 @@
 
     networking.firewall.allowedTCPPorts = [80 443];
 
-    systemd.services.caddy.serviceConfig.EnvironmentFile = config.sops.secrets.caddy-environment.path;
+    systemd.services.caddy = {
+      serviceConfig.EnvironmentFile = config.sops.secrets."caddy-environment-${name}".path;
+      after = ["sops-secrets.service"];
+      wants = ["sops-secrets.service"];
+      partOf = ["sops-secrets.service"];
+    };
 
     services.caddy = {
       enable = true;
       enableReload = true;
       email = "devops+cardano-monitoring@iohk.io";
 
-      virtualHosts."${name}.${domain}".extraConfig = let
-        basicauth = pattern: ''
-          basicauth ${pattern} bcrypt ${name} {
-            ${name} {$BASIC_AUTH_HASH}
-          }
-        '';
-      in ''
+      virtualHosts."${name}.${domain}".extraConfig = ''
         encode zstd gzip
 
-        ${basicauth "/blackbox/*"}
         handle /blackbox/* {
+          basicauth { admin {$ADMIN_HASH} }
           reverse_proxy 127.0.0.1:9115
         }
 
-        ${basicauth "/mimir/*"}
+        handle /mimir/api/v1/push {
+          basicauth { write {$WRITE_HASH} }
+          reverse_proxy 127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}
+        }
+
         handle /mimir/* {
+          basicauth { admin {$ADMIN_HASH} }
           reverse_proxy 127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}
         }
 
@@ -206,7 +211,7 @@
       exporters.blackbox = {
         enable = true;
         extraFlags = [
-          "--web.external-url=https://${name}.${domain}/blackbox"
+          # "--web.external-url=https://${name}.${domain}/blackbox"
           # "--web.route-prefix=/blackbox"
           # "--log.level=debug"
         ];

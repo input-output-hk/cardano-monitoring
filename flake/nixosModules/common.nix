@@ -167,11 +167,10 @@
                     job_name = "blackbox";
                     metrics_path = "/probe";
                     params.module = ["https_2xx"];
+                    scrape_interval = "1m";
                     static_configs = [
                       {
-                        targets = [
-                          "https://book.play.dev.cardano.org"
-                        ];
+                        targets = import ((inputs."cardano-${name}") + "/flake/terraform/grafana/blackbox/blackbox.nix-import");
                       }
                     ];
                     relabel_configs = [
