@@ -69,6 +69,7 @@
               uid = "mimir";
               isDefault = true;
               url = "http://127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}/mimir/prometheus";
+              jsonData.timeInterval = "60s";
             }
             {
               type = "alertmanager";
