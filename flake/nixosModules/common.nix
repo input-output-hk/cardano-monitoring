@@ -114,7 +114,12 @@
     };
 
     services = {
-      chrony.enable = true;
+      chrony = {
+        enable = true;
+        extraConfig = "rtcsync";
+        enableRTCTrimming = false;
+      };
+
       cron.enable = true;
       fail2ban.enable = true;
 
