@@ -77,7 +77,7 @@ ssh-list-names HOSTNAME_REGEX_PATTERN:
 cf STACKNAME:
   #!/usr/bin/env nu
   nix eval --json '.#cloudFormation.{{STACKNAME}}' | from json | save --force 'cloudformation.{{STACKNAME}}.json'
-  rain deploy --debug --termination-protection --yes cloudformation.{{STACKNAME}}.json  
+  rain deploy --debug --termination-protection --yes cloudformation.{{STACKNAME}}.json
 
 tf *ARGS:
   #!/usr/bin/env bash
@@ -104,8 +104,8 @@ tf *ARGS:
   rm --force tofu.tf.json
   nix build ".#opentofu.$WORKSPACE" --out-link tofu.tf.json
 
-  tofu workspace select -or-create "$WORKSPACE" || true
   tofu init -reconfigure
+  tofu workspace select -or-create "$WORKSPACE" || true
   tofu ${ARGS[@]} ${VAR_FILE:+-var-file=<("${SOPS[@]}" "$VAR_FILE")}
 
 tf-fast *ARGS:
