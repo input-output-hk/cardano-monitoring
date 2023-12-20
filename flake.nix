@@ -2,7 +2,7 @@
   description = "Monitoring Parts: nix flake parts for monitoring clusters";
 
   inputs = {
-    auth-keys-hub.url = "github:input-output-hk/auth-keys-hub";
+    auth-keys-hub.url = "github:input-output-hk/auth-keys-hub/aarch64-linux";
     auth-keys-hub.inputs.nixpkgs.follows = "nixpkgs";
     colmena.inputs.nixpkgs.follows = "nixpkgs";
     colmena.url = "github:zhaofengli/colmena/v0.4.0";

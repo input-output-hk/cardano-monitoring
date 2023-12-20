@@ -1,4 +1,5 @@
 {
+  self,
   inputs,
   moduleWithSystem,
   ...
@@ -100,8 +101,23 @@
       };
     };
 
+    sops.secrets.github-token = {
+      sopsFile = "${self}/secrets/github-token.enc";
+      owner = config.programs.auth-keys-hub.user;
+      inherit (config.programs.auth-keys-hub) group;
+    };
+
     programs = {
-      auth-keys-hub.github.users = ["manveru"];
+      auth-keys-hub = {
+        enable = true;
+        package = inputs.auth-keys-hub.packages.${system}.auth-keys-hub;
+        dataDir = "/var/lib/auth-keys-hub";
+        github = {
+          teams = ["input-output-hk/node-sre"];
+          users = ["manveru"];
+          tokenFile = config.sops.secrets.github-token.path;
+        };
+      };
 
       tmux = {
         enable = true;
@@ -112,6 +128,10 @@
         newSession = true;
       };
     };
+
+    users.users.root.openssh.authorizedKeys.keys = [
+      "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCogRPMTKyOIQcbS/DqbYijPrreltBHf5ctqFOVAlehvpj8enEE51VSjj4Xs/JEsPWpOJL7Ldp6lDNgFzyuL2AOUWE7wlHx2HrfeCOVkPEzC3uL4OjRTCdsNoleM3Ny2/Qxb0eX2SPoSsEGvpwvTMfUapEa1Ak7Gf39voTYOucoM/lIB/P7MKYkEYiaYaZBcTwjxZa3E+v7At4umSZzv8x24NV60fAyyYmt5hVZRYgoMW+nTU4J/Oq9JGgY7o+WPsOWcgFoSretRnGDwjM1IAUFVpI45rQH2HTKNJ6Bp6ncKwtVaP2dvPdBFe3x2LLEhmh1jDwmbtSXfoVZxbONtub2i/D8DuDhLUNBx/ROgal7N2RgYPcPuNdzfp8hMPjPGZVcSmszC/J1Gz5LqLfWbKKKti4NiSX+euy+aYlgW8zQlUS7aGxzRC/JSgk2KJynFEKJjhj7L9KzsE8ysIgggxYdk18ozDxz2FMPMV5PD1+8x4anWyfda6WR8CXfHlshTwhe+BkgSbsYNe6wZRDGqL2no/PY+GTYRNLgzN721Nv99htIccJoOxeTcs329CppqRNFeDeJkGOnJGc41ze+eVNUkYxOP0O+pNwT7zNDKwRwBnT44F0nNwRByzj2z8i6/deNPmu2sd9IZie8KCygqFiqZ8LjlWTD6JAXPKtTo5GHNQ== john.lotoski@iohk.io"
+    ];
 
     services = {
       chrony = {
