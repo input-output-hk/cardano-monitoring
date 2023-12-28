@@ -13,11 +13,10 @@
     };
 
     defaults.imports = [
-      self.nixosModules.common
-      self.nixosModules.opentofu
-      self.nixosModules.aws
       inputs.auth-keys-hub.nixosModules.auth-keys-hub
       inputs.sops-nix.nixosModules.default
+      self.nixosModules.aws
+      self.nixosModules.common
       self.nixosModules.monitoring
     ];
   };

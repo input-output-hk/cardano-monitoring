@@ -5,14 +5,7 @@ AWS_REGION := 'eu-central-1'
 
 checkSshConfig := '''
   if not ('.ssh_config' | path exists) {
-    print "Please run tofu first to create the .ssh_config file"
-    exit 1
-  }
-'''
-
-checkSshKey := '''
-  if not ('.ssh_key' | path exists) {
-    just save-bootstrap-ssh-key
+    just save-ssh-config
   }
 '''
 
@@ -53,7 +46,9 @@ ssh HOSTNAME *ARGS:
 ssh-bootstrap HOSTNAME *ARGS:
   #!/usr/bin/env nu
   {{checkSshConfig}}
-  {{checkSshKey}}
+  if not ('.ssh_key' | path exists) {
+    just save-bootstrap-ssh-key
+  }
   ssh -o LogLevel=ERROR -F .ssh_config -i .ssh_key {{HOSTNAME}} {{ARGS}}
 
 ssh-for-all *ARGS:
@@ -67,12 +62,24 @@ ssh-for-each HOSTNAMES *ARGS:
 ssh-list-ips HOSTNAME_REGEX_PATTERN:
   #!/usr/bin/env nu
   {{checkSshConfig}}
-  scj dump /dev/stdout -c .ssh_config | from json | default "" Host | where Host =~ "{{HOSTNAME_REGEX_PATTERN}}" | get HostName | str join " "
+  ( scj dump /dev/stdout -c .ssh_config
+  | from json
+  | default "" Host
+  | default "" HostName
+  | where Host =~ {{HOSTNAME_REGEX_PATTERN}} and HostName != ""
+  | get HostName
+  | str join " " )
 
 ssh-list-names HOSTNAME_REGEX_PATTERN:
   #!/usr/bin/env nu
   {{checkSshConfig}}
-  scj dump /dev/stdout -c .ssh_config | from json | default "" Host | where Host =~ "{{HOSTNAME_REGEX_PATTERN}}" | get Host | str join " "
+  ( scj dump /dev/stdout -c .ssh_config
+  | from json
+  | default "" Host
+  | default "" HostName
+  | where Host =~ {{HOSTNAME_REGEX_PATTERN}} and HostName != ""
+  | get Host
+  | str join " " )
 
 cf STACKNAME:
   #!/usr/bin/env nu
@@ -88,7 +95,7 @@ tf *ARGS:
   SOPS=(sops --input-type binary --output-type binary --decrypt)
 
   read -r -a ARGS <<< "{{ARGS}}"
-  if [[ ${ARGS[0]} =~ cluster|grafana ]]; then
+  if [[ ${ARGS[0]} =~ cluster ]]; then
     WORKSPACE="${ARGS[0]}"
     ARGS=("${ARGS[@]:1}")
   else
@@ -117,7 +124,7 @@ tf-fast *ARGS:
   SOPS=(sops --input-type binary --output-type binary --decrypt)
 
   read -r -a ARGS <<< "{{ARGS}}"
-  if [[ ${ARGS[0]} =~ cluster|grafana ]]; then
+  if [[ ${ARGS[0]} =~ cluster ]]; then
     WORKSPACE="${ARGS[0]}"
     ARGS=("${ARGS[@]:1}")
   else
@@ -170,3 +177,13 @@ save-bootstrap-ssh-key:
   let key = ($tf.values.root_module.resources | where type == tls_private_key and name == bootstrap)
   $key.values.private_key_openssh | save .ssh_key
   chmod 0600 .ssh_key
+
+save-ssh-config:
+  #!/usr/bin/env nu
+  print "Retrieving ssh config from tofu..."
+  tofu workspace select -or-create cluster
+  tofu init -reconfigure
+  let tf = (tofu show -json | from json)
+  let key = ($tf.values.root_module.resources | where type == local_file and name == ssh_config)
+  $key.values.content | save --force .ssh_config
+  chmod 0600 .ssh_config

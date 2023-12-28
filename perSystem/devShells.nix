@@ -6,11 +6,11 @@
     ...
   }: {
     devShells.default = pkgs.mkShell {
-      packages = with pkgs;
-        [
+      packages =
+        [config.treefmt.build.wrapper]
+        ++ (with pkgs; [
           awscli2
           colmena
-          config.treefmt.build.wrapper
           deadnix
           just
           rain
@@ -22,7 +22,7 @@
           grafana
           mimir
           caddy
-        ]
+        ])
         ++ (with self'.packages; [
           ssh-config-json
           opentofu

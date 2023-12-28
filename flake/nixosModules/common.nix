@@ -7,6 +7,7 @@
   flake.nixosModules.common = moduleWithSystem ({system}: {
     name,
     pkgs,
+    lib,
     config,
     ...
   }: {
@@ -74,33 +75,6 @@
 
     sops.defaultSopsFormat = "binary";
 
-    # Sops-secrets service provides a systemd hook for other services
-    # needing to be restarted after new secrets are pushed.
-    #
-    # Example usage:
-    #   systemd.services.<name> = {
-    #     after = ["sops-secrets.service"];
-    #     wants = ["sops-secrets.service"];
-    #     partOf = ["sops-secrets.service"];
-    #   };
-    #
-    # Also, on boot SOPS runs in stage 2 without networking.
-    # For repositories using KMS sops secrets, this prevent KMS from working,
-    # so we repeat the activation script until decryption succeeds.
-    systemd.services.sops-secrets = {
-      wantedBy = ["multi-user.target"];
-      after = ["network-online.target"];
-
-      script = config.system.activationScripts.setupSecrets.text or "true";
-
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        Restart = "on-failure";
-        RestartSec = "2s";
-      };
-    };
-
     sops.secrets.github-token = {
       sopsFile = "${self}/secrets/github-token.enc";
       owner = config.programs.auth-keys-hub.user;
@@ -114,7 +88,7 @@
         dataDir = "/var/lib/auth-keys-hub";
         github = {
           teams = ["input-output-hk/node-sre"];
-          users = ["manveru"];
+          users = ["manveru" "johnalotoski"];
           tokenFile = config.sops.secrets.github-token.path;
         };
       };
@@ -128,10 +102,6 @@
         newSession = true;
       };
     };
-
-    users.users.root.openssh.authorizedKeys.keys = [
-      "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCogRPMTKyOIQcbS/DqbYijPrreltBHf5ctqFOVAlehvpj8enEE51VSjj4Xs/JEsPWpOJL7Ldp6lDNgFzyuL2AOUWE7wlHx2HrfeCOVkPEzC3uL4OjRTCdsNoleM3Ny2/Qxb0eX2SPoSsEGvpwvTMfUapEa1Ak7Gf39voTYOucoM/lIB/P7MKYkEYiaYaZBcTwjxZa3E+v7At4umSZzv8x24NV60fAyyYmt5hVZRYgoMW+nTU4J/Oq9JGgY7o+WPsOWcgFoSretRnGDwjM1IAUFVpI45rQH2HTKNJ6Bp6ncKwtVaP2dvPdBFe3x2LLEhmh1jDwmbtSXfoVZxbONtub2i/D8DuDhLUNBx/ROgal7N2RgYPcPuNdzfp8hMPjPGZVcSmszC/J1Gz5LqLfWbKKKti4NiSX+euy+aYlgW8zQlUS7aGxzRC/JSgk2KJynFEKJjhj7L9KzsE8ysIgggxYdk18ozDxz2FMPMV5PD1+8x4anWyfda6WR8CXfHlshTwhe+BkgSbsYNe6wZRDGqL2no/PY+GTYRNLgzN721Nv99htIccJoOxeTcs329CppqRNFeDeJkGOnJGc41ze+eVNUkYxOP0O+pNwT7zNDKwRwBnT44F0nNwRByzj2z8i6/deNPmu2sd9IZie8KCygqFiqZ8LjlWTD6JAXPKtTo5GHNQ== john.lotoski@iohk.io"
-    ];
 
     services = {
       chrony = {
@@ -285,5 +255,95 @@
     };
 
     system.stateVersion = "23.05";
+
+    systemd = {
+      services = {
+        # Remove the bootstrap key after 1 week in favor of auth-keys-hub use
+        remove-ssh-bootstrap-key = {
+          wantedBy = ["multi-user.target"];
+          after = ["network-online.target"];
+
+          serviceConfig = {
+            Type = "oneshot";
+
+            ExecStart = lib.getExe (pkgs.writeShellApplication {
+              name = "remove-ssh-bootstrap-key";
+              runtimeInputs = with pkgs; [fd gnugrep gnused];
+              text = ''
+                if ! [ -f /root/.ssh/.bootstrap-key-removed ]; then
+                  # Verify auth keys is properly hooked into sshd
+                  if ! grep -q 'AuthorizedKeysCommand /etc/ssh/auth-keys-hub --user %u' /etc/ssh/sshd_config; then
+                    echo "SSH daemon authorized keys command does not appear to have auth-keys-hub installed"
+                    exit
+                  fi
+
+                  if ! grep -q 'AuthorizedKeysCommandUser ${config.programs.auth-keys-hub.user}' /etc/ssh/sshd_config; then
+                    echo "SSH daemon authorized keys command user does not appear to be using the ${config.programs.auth-keys-hub.user} user"
+                    exit
+                  fi
+
+                  # Ensure at least 1 ssh key is declared outside of auth-keys-hub
+                  if ! grep -q -E '^ssh-' /etc/ssh/authorized_keys.d/root &> /dev/null; then
+                    echo "You must declare at least 1 authorized key via users.users.root.openssh.authorizedKeys attribute before the bootstrap key will be removed"
+                    exit
+                  fi
+
+                  # Allow 1 week of bootstrap key use before removing it
+                  if fd --quiet --changed-within 7d authorized_keys /root/.ssh; then
+                    echo "The root authorized_keys file has been changed within the past week; waiting a little longer before removing the bootstrap key"
+                    exit
+                  fi
+
+                  # Remove the bootstrap key and set a marker
+                  echo "Removing the bootstrap key from /root/.ssh/authorized_keys"
+                  sed -i '/bootstrap/d' /root/.ssh/authorized_keys
+                  touch /root/.ssh/.bootstrap-key-removed
+                fi
+              '';
+            });
+          };
+        };
+
+        # Sops-secrets service provides a systemd hook for other services
+        # needing to be restarted after new secrets are pushed.
+        #
+        # Example usage:
+        #   systemd.services.<name> = {
+        #     after = ["sops-secrets.service"];
+        #     wants = ["sops-secrets.service"];
+        #     partOf = ["sops-secrets.service"];
+        #   };
+        #
+        # Also, on boot SOPS runs in stage 2 without networking.
+        # For repositories using KMS sops secrets, this prevent KMS from working,
+        # so we repeat the activation script until decryption succeeds.
+        sops-secrets = {
+          wantedBy = ["multi-user.target"];
+          after = ["network-online.target"];
+
+          script = config.system.activationScripts.setupSecrets.text or "true";
+
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            Restart = "on-failure";
+            RestartSec = "2s";
+          };
+        };
+      };
+
+      timers = {
+        remove-ssh-bootstrap-key = {
+          wantedBy = ["timers.target"];
+          timerConfig = {
+            OnCalendar = "daily";
+            Unit = "remove-ssh-bootstrap-key.service";
+          };
+        };
+
+        # Enforce accurate 10 second sysstat sampling intervals
+        sysstat-collect.timerConfig.AccuracySec = "1us";
+      };
+    };
   });
 }

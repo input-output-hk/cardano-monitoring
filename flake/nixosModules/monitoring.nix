@@ -135,7 +135,7 @@
         server = {
           http_listen_port = 8080;
           http_listen_address = "127.0.0.1";
-          log_level = "debug";
+          # log_level = "debug";
           http_path_prefix = "/mimir";
           log_request_headers = true;
         };
@@ -199,7 +199,7 @@
 
     services.prometheus = {
       enable = true;
-      extraFlags = ["--log.level=debug"];
+      # extraFlags = ["--log.level=debug"];
 
       alertmanagers = [
         {
