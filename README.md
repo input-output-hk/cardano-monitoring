@@ -98,8 +98,8 @@ All secrets live in `./secrets/`
 
 You should be able to edit secrets using:
 
-    sops --kms "$KMS" ./secrets/mimir-token.enc
+    sops --kms "$KMS" ./secrets/github-token.enc
 
 Or simply decrypt a secret with
 
-    sops -d ./secrets/mimir-token.enc 
+    sops -d ./secrets/github-token.enc 

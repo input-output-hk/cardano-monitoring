@@ -5,18 +5,21 @@
     name,
     ...
   }: let
-    inherit (self.cluster.infra.aws) bucketName domain;
+    inherit (self.cluster.infra.aws) bucketName domain email;
 
     ownerGrafana = sopsFile: {
       owner = "grafana";
       inherit sopsFile;
+      restartUnits = ["grafana.service"];
     };
   in {
     sops.secrets.grafana-password = ownerGrafana ../../secrets/grafana-password.enc;
     sops.secrets.grafana-oauth-client-id = ownerGrafana ../../secrets/grafana-oauth-client-id.enc;
     sops.secrets.grafana-oauth-client-secret = ownerGrafana ../../secrets/grafana-oauth-client-secret.enc;
-    sops.secrets.mimir-token.sopsFile = ../../secrets/mimir-token.enc;
-    sops.secrets."caddy-environment-${name}".sopsFile = ../../secrets + "/caddy-environment-${name}.enc";
+    sops.secrets."caddy-environment-${name}" = {
+      sopsFile = ../../secrets + "/caddy-environment-${name}.enc";
+      restartUnits = ["caddy.service"];
+    };
 
     services.grafana = {
       enable = true;
@@ -161,17 +164,12 @@
 
     networking.firewall.allowedTCPPorts = [80 443];
 
-    systemd.services.caddy = {
-      serviceConfig.EnvironmentFile = config.sops.secrets."caddy-environment-${name}".path;
-      after = ["sops-secrets.service"];
-      wants = ["sops-secrets.service"];
-      partOf = ["sops-secrets.service"];
-    };
+    systemd.services.caddy.serviceConfig.EnvironmentFile = config.sops.secrets."caddy-environment-${name}".path;
 
     services.caddy = {
       enable = true;
       enableReload = true;
-      email = "devops+cardano-monitoring@iohk.io";
+      inherit email;
 
       virtualHosts."${name}.${domain}".extraConfig = ''
         encode zstd gzip

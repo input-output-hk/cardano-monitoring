@@ -6,5 +6,6 @@
     kms = "arn:aws:kms:eu-central-1:463886338519:alias/kmsKey";
     domain = "monitoring.aws.iohkdev.io";
     bucketName = "cardano-monitoring";
+    email = "devops+cardano-monitoring@iohk.io";
   };
 }
