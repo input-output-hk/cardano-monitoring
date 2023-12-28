@@ -40,7 +40,6 @@
 
     environment.systemPackages = with pkgs; [
       awscli2
-      age
       bat
       bind
       cloud-utils
