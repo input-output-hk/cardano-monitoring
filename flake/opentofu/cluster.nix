@@ -5,7 +5,7 @@
   config,
   ...
 }: let
-  cluster = self.cluster.infra.aws;
+  inherit (self.cluster.infra) generic aws;
   amis = import "${inputs.nixpkgs}/nixos/modules/virtualisation/amazon-ec2-amis.nix";
   awsProviderFor = region: "aws.${underscore region}";
   underscore = lib.replaceStrings ["-"] ["_"];
@@ -22,9 +22,9 @@
         then 1
         else 0;
     })
-    cluster.regions;
+    aws.regions;
 
-  inherit (cluster) bucketName;
+  inherit (aws) bucketName;
   buckets = [
     "${bucketName}-mainnet"
     "${bucketName}-playground"
@@ -46,7 +46,7 @@ in {
 
           backend = {
             s3 = {
-              inherit (cluster) region;
+              inherit (aws) region;
               bucket = bucketName;
               key = "opentofu";
               dynamodb_table = "opentofu";
@@ -54,9 +54,13 @@ in {
           };
         };
 
-        provider.aws = lib.forEach (builtins.attrNames cluster.regions) (region: {
+        provider.aws = lib.forEach (builtins.attrNames aws.regions) (region: {
           inherit region;
           alias = underscore region;
+          default_tags.tags = {
+            inherit (generic) organization tribe function repo;
+            environment = "generic";
+          };
         });
 
         # Common parameters:
@@ -65,7 +69,7 @@ in {
         data = {
           aws_caller_identity.current = {};
           aws_region.current = {};
-          aws_route53_zone.selected.name = "${cluster.domain}.";
+          aws_route53_zone.selected.name = "${aws.domain}.";
         };
 
         resource.aws_instance = mapNodes (
@@ -80,7 +84,7 @@ in {
               vpc_security_group_ids = [
                 "\${aws_security_group.common_${underscore node.aws.region}[0].id}"
               ];
-              tags = node.aws.instance.tags or {Name = name;};
+              inherit (node.aws.instance) tags;
 
               root_block_device = {
                 inherit (node.aws.instance.root_block_device) volume_size;
@@ -214,10 +218,9 @@ in {
         });
 
         resource.aws_eip = mapNodes (name: node: {
-          inherit (node.aws.instance) count;
+          inherit (node.aws.instance) count tags;
           provider = awsProviderFor node.aws.region;
           instance = "\${aws_instance.${name}[0].id}";
-          tags.Name = name;
         });
 
         resource.aws_eip_association = mapNodes (name: node: {
