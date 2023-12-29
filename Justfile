@@ -83,8 +83,8 @@ ssh-list-names HOSTNAME_REGEX_PATTERN:
 
 cf STACKNAME:
   #!/usr/bin/env nu
-  nix eval --json '.#cloudFormation.{{STACKNAME}}' | from json | save --force 'cloudformation.{{STACKNAME}}.json'
-  rain deploy --debug --termination-protection --yes cloudformation.{{STACKNAME}}.json
+  nix eval --json '.#cloudFormation.{{STACKNAME}}' | from json | save --force '{{STACKNAME}}.json'
+  rain deploy --debug --termination-protection --yes {{STACKNAME}}.json
 
 tf *ARGS:
   #!/usr/bin/env bash
