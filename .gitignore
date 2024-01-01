@@ -5,3 +5,4 @@ treefmt.toml
 cloudformation.*.json
 .terraform*
 .ssh_*
+state.json
