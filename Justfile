@@ -2,6 +2,7 @@ set shell := ["nu", "-c"]
 set positional-arguments
 AWS_PROFILE := 'cardano-monitoring'
 AWS_REGION := 'eu-central-1'
+WORKSPACE := 'cluster'
 
 checkSshConfig := '''
   if not ('.ssh_config' | path exists) {
@@ -87,60 +88,7 @@ cf STACKNAME:
   rain deploy --debug --termination-protection --yes {{STACKNAME}}.json
 
 tf *ARGS:
-  #!/usr/bin/env bash
-  set -exuo pipefail
-  IGREEN='\033[1;92m'
-  IRED='\033[1;91m'
-  NC='\033[0m'
-  SOPS=(sops --input-type binary --output-type binary --decrypt)
-
-  read -r -a ARGS <<< "{{ARGS}}"
-  if [[ ${ARGS[0]} =~ cluster ]]; then
-    WORKSPACE="${ARGS[0]}"
-    ARGS=("${ARGS[@]:1}")
-  else
-    WORKSPACE="cluster"
-  fi
-
-  unset VAR_FILE
-  if [ -s "secrets/tf/$WORKSPACE.tfvars" ]; then
-    VAR_FILE="secrets/tf/$WORKSPACE.tfvars"
-  fi
-
-  echo -e "Running tofu in the ${IGREEN}$WORKSPACE${NC} workspace..."
-  rm --force tofu.tf.json
-  nix build ".#opentofu.$WORKSPACE" --out-link tofu.tf.json
-
-  tofu init -reconfigure
-  tofu workspace select -or-create "$WORKSPACE" || true
-  tofu ${ARGS[@]} ${VAR_FILE:+-var-file=<("${SOPS[@]}" "$VAR_FILE")}
-
-tf-fast *ARGS:
-  #!/usr/bin/env bash
-  set -exuo pipefail
-  IGREEN='\033[1;92m'
-  IRED='\033[1;91m'
-  NC='\033[0m'
-  SOPS=(sops --input-type binary --output-type binary --decrypt)
-
-  read -r -a ARGS <<< "{{ARGS}}"
-  if [[ ${ARGS[0]} =~ cluster ]]; then
-    WORKSPACE="${ARGS[0]}"
-    ARGS=("${ARGS[@]:1}")
-  else
-    WORKSPACE="cluster"
-  fi
-
-  unset VAR_FILE
-  if [ -s "secrets/tf/$WORKSPACE.tfvars" ]; then
-    VAR_FILE="secrets/tf/$WORKSPACE.tfvars"
-  fi
-
-  echo -e "Running tofu in the ${IGREEN}$WORKSPACE${NC} workspace..."
-  rm --force tofu.tf.json
-  nix build ".#opentofu.$WORKSPACE" --out-link tofu.tf.json
-
-  tofu ${ARGS[@]} ${VAR_FILE:+-var-file=<("${SOPS[@]}" "$VAR_FILE")}
+  tf {{ARGS}}
 
 update-aws-ec2-spec profile=AWS_PROFILE region=AWS_REGION:
   #!/usr/bin/env nu
@@ -171,6 +119,7 @@ show-nameservers:
 save-bootstrap-ssh-key:
   #!/usr/bin/env nu
   print "Retrieving ssh key from tofu..."
+  nix build ".#opentofu.$WORKSPACE" --out-link tofu.tf.json
   tofu workspace select -or-create cluster
   tofu init -reconfigure
   let tf = (tofu show -json | from json)
@@ -181,9 +130,11 @@ save-bootstrap-ssh-key:
 save-ssh-config:
   #!/usr/bin/env nu
   print "Retrieving ssh config from tofu..."
+  nix build ".#opentofu.$WORKSPACE" --out-link tofu.tf.json
   tofu workspace select -or-create cluster
-  tofu init -reconfigure
+  # tofu init -reconfigure
   let tf = (tofu show -json | from json)
   let key = ($tf.values.root_module.resources | where type == local_file and name == ssh_config)
-  $key.values.content | save --force .ssh_config
-  chmod 0600 .ssh_config
+  $key.values.content | save --force $env.SSH_CONFIG_FILE
+  chmod 0600 $env.SSH_CONFIG_FILE
+  print $"Saved to ($env.SSH_CONFIG_FILE)"

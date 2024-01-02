@@ -26,6 +26,7 @@
         ++ (with self'.packages; [
           ssh-config-json
           opentofu
+          tf
         ]);
 
       AWS_PROFILE = self.cluster.infra.aws.profile;
