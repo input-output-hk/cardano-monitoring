@@ -16,7 +16,12 @@ While working on the next step, you can already start the devshell using:
 
 This will be done automatically if you are using [direnv](https://direnv.net/).
 
-## AWS
+### General
+
+General information about this cluster is stored in the `flake/cluster.nix`
+file. 
+
+### AWS
 
 Create an AWS user with your name and `AdministratorAccess` policy in the
 cardano-monitoring organization, then store your access key in
@@ -26,7 +31,7 @@ cardano-monitoring organization, then store your access key in
     aws_access_key_id = XXXXXXXXXXXXXXXXXXXX
     aws_secret_access_key = XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
-## SSH
+### SSH
 
 If your credentials are correct, you will be able to access SSH after creating
 an `./.ssh_config` using:
@@ -41,7 +46,7 @@ or
 
     ssh -F .ssh_config playground
 
-## Cloudformation
+### Cloudformation
 
 We bootstrap our infrastructure using AWS Cloudformation, it creates resources
 like S3 Buckets, a DNS Zone, KMS key, and OpenTofu state storage.
@@ -57,7 +62,7 @@ configuration. There is a wrapper that evaluates the config and deploys it:
 
     just cf state
 
-## OpenTofu
+### OpenTofu
 
 We use [OpenTofu](https://opentofu.org/) to create AWS instances, roles,
 profiles, policies, Route53 records, EIPs, security groups, and similar.
@@ -65,12 +70,12 @@ profiles, policies, Route53 records, EIPs, security groups, and similar.
 All configuration is in `./flake/opentofu/cluster.nix`
 
 The wrapper to setup the state, workspace, evaluate the config, and run `tofu`
-is:
+is called `tf`:
 
-    just tf plan
-    just tf apply
+    tf plan
+    tf apply
 
-## Colmena
+### Colmena
 
 To deploy changes on an OS level, we use the excellent
 [Colmena](https://github.com/zhaofengli/colmena).
@@ -89,7 +94,7 @@ Then you can run `colmena` to run and apply your configuration:
     colmena build
     colmena apply
 
-## Secrets
+### Secrets
 
 Secrets are encrypted using [SOPS](https://github.com/getsops/sops)
 and [KMS](https://aws.amazon.com/kms/).
@@ -103,3 +108,15 @@ You should be able to edit secrets using:
 Or simply decrypt a secret with
 
     sops -d ./secrets/github-token.enc 
+
+#### Caddy
+
+We use basic authentication for metric collection.
+To generate a password for [Caddy](https://caddyserver.com/) use:
+
+    caddy hash-password
+    
+The current passwords are stored in
+`secrets/caddy-environment-playground.enc`
+and
+`secrets/caddy-environment-mainnet.enc`

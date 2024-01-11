@@ -28,7 +28,7 @@
 
         region = lib.mkOption {
           type = lib.types.str;
-          default = "eu-central-1";
+          default = self.cluster.infra.aws.region;
         };
       };
     };

@@ -96,7 +96,7 @@
         common.storage = {
           backend = "s3";
           s3 = {
-            region = "eu-central-1";
+            region = self.cluster.infra.aws.region;
             bucket_name = "${bucketName}-${name}";
             endpoint = "s3.amazonaws.com";
           };

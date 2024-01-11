@@ -90,10 +90,10 @@ cf STACKNAME:
 tf *ARGS:
   tf {{ARGS}}
 
+# To describe instance types, any valid aws profile can be provided
+# Default region for specs will be eu-central-1 which provides ~600 machine definitions.
 update-aws-ec2-spec profile=AWS_PROFILE region=AWS_REGION:
   #!/usr/bin/env nu
-  # To describe instance types, any valid aws profile can be provided
-  # Default region for specs will be eu-central-1 which provides ~600 machine defns
   let spec = (
     do -c { aws ec2 --profile {{profile}} --region {{region}} describe-instance-types }
     | from json
