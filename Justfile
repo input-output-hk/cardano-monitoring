@@ -15,7 +15,7 @@ default:
 
 lint:
   deadnix -f
-  statix check
+  statix check -i .direnv
 
 show-flake *ARGS:
   nix flake show {{ARGS}}
@@ -138,3 +138,20 @@ save-ssh-config:
   $key.values.content | save --force $env.SSH_CONFIG_FILE
   chmod 0600 $env.SSH_CONFIG_FILE
   print $"Saved to ($env.SSH_CONFIG_FILE)"
+
+kms:
+  #!/usr/bin/env nu
+  ( aws kms list-aliases
+  | from json
+  | get Aliases
+  | where AliasName == "alias/kmsKey"
+  | get AliasArn.0 )
+
+# URL example: https://playground.monitoring.aws.iohkdev.io/mimir
+mimir-bootstrap URL:
+  if not ('fallback.yml' | path exists) { print "Please create a fallback.yml file"; exit }
+  mimirtool alertmanager load --log.level=debug --address {{URL}} --id anonymous fallback.yml
+
+book:
+  tofu fmt docs/grafana.tf
+  mdbook build docs/

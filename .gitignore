@@ -6,3 +6,5 @@ cloudformation.*.json
 .terraform*
 .ssh_*
 state.json
+/static/
+/result

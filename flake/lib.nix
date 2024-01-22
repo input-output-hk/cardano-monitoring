@@ -22,16 +22,18 @@
             (getDir path))
         else [path];
 
-      # Filters out files that don't end with .nix and also make the strings absolute path based
-      validFiles = path:
-        map
-        (file:
-          if lib.hasPrefix "/nix/store" file
-          then file
-          else path + "/${file}")
-        (lib.filter
-          (lib.hasSuffix ".nix")
-          (files path));
+      # Select files ending with .nix
+      nixFiles = path: lib.filter (lib.hasSuffix ".nix") (files path);
+
+      # ensure all files are absolute paths
+      makeAbsolute = path: file:
+        if lib.hasPrefix "/nix/store" file
+        then file
+        else path + "/${file}";
+
+      # Select files that with .nix suffix and also make the strings
+      # absolute path based
+      validFiles = path: map (makeAbsolute path) (nixFiles path);
     in
       lib.concatMap validFiles;
   });

@@ -3,8 +3,10 @@
   lib,
   ...
 }: {
+  # Execute this using: `just cf state`
+
   flake.cloudFormation.state = let
-    inherit (self.cluster.infra.aws) domain bucketName;
+    inherit (self.cluster.infra.aws) domain buckets;
 
     tagWith = name: (lib.mapAttrsToList (Key: Value: {
         inherit Key Value;
@@ -33,77 +35,73 @@
     AWSTemplateFormatVersion = "2010-09-09";
     Description = "State handling";
 
-    # Execute this using: `just cf state`
+    Resources =
+      (lib.mapAttrs (_: mkBucket) buckets)
+      // {
+        kmsKey = {
+          Type = "AWS::KMS::Key";
+          DeletionPolicy = "RetainExceptOnCreate";
+          Properties = {
+            Tags = tagWith "kmsKey";
+            KeyPolicy."Fn::Sub" = builtins.toJSON {
+              Version = "2012-10-17";
+              Statement = [
+                {
+                  Action = "kms:*";
+                  Effect = "Allow";
+                  Principal.AWS = "arn:aws:iam::\${AWS::AccountId}:root";
+                  Resource = "*";
+                  Sid = "Enable admin use and IAM user permissions";
+                }
+              ];
+            };
+          };
+        };
 
-    Resources = {
-      S3Bucket = mkBucket bucketName;
-      PlaygroundBucket = mkBucket "${bucketName}-playground";
-      MainnetBucket = mkBucket "${bucketName}-mainnet";
+        kmsKeyAlias = {
+          Type = "AWS::KMS::Alias";
+          DeletionPolicy = "RetainExceptOnCreate";
+          Properties = {
+            # KMS aliases do not accept tags
+            # This name is used in various places, check before changing it.
+            AliasName = "alias/kmsKey";
+            TargetKeyId.Ref = "kmsKey";
+          };
+        };
 
-      kmsKey = {
-        Type = "AWS::KMS::Key";
-        DeletionPolicy = "RetainExceptOnCreate";
-        Properties = {
-          Tags = tagWith "kmsKey";
-          KeyPolicy."Fn::Sub" = builtins.toJSON {
-            Version = "2012-10-17";
-            Statement = [
+        DNSZone = {
+          Type = "AWS::Route53::HostedZone";
+          DeletionPolicy = "RetainExceptOnCreate";
+          Properties = {
+            HostedZoneTags = tagWith domain;
+            Name = domain;
+          };
+        };
+
+        DynamoDB = {
+          Type = "AWS::DynamoDB::Table";
+          DeletionPolicy = "RetainExceptOnCreate";
+          Properties = {
+            Tags = tagWith "opentofu-DynamoDB";
+            TableName = "opentofu";
+
+            KeySchema = [
               {
-                Action = "kms:*";
-                Effect = "Allow";
-                Principal.AWS = "arn:aws:iam::\${AWS::AccountId}:root";
-                Resource = "*";
-                Sid = "Enable admin use and IAM user permissions";
+                AttributeName = "LockID";
+                KeyType = "HASH";
               }
             ];
+
+            AttributeDefinitions = [
+              {
+                AttributeName = "LockID";
+                AttributeType = "S";
+              }
+            ];
+
+            BillingMode = "PAY_PER_REQUEST";
           };
         };
       };
-
-      kmsKeyAlias = {
-        Type = "AWS::KMS::Alias";
-        DeletionPolicy = "RetainExceptOnCreate";
-        Properties = {
-          # KMS aliases do not accept tags
-          # This name is used in various places, check before changing it.
-          AliasName = "alias/kmsKey";
-          TargetKeyId.Ref = "kmsKey";
-        };
-      };
-
-      DNSZone = {
-        Type = "AWS::Route53::HostedZone";
-        DeletionPolicy = "RetainExceptOnCreate";
-        Properties = {
-          HostedZoneTags = tagWith domain;
-          Name = domain;
-        };
-      };
-
-      DynamoDB = {
-        Type = "AWS::DynamoDB::Table";
-        DeletionPolicy = "RetainExceptOnCreate";
-        Properties = {
-          Tags = tagWith "opentofu-DynamoDB";
-          TableName = "opentofu";
-
-          KeySchema = [
-            {
-              AttributeName = "LockID";
-              KeyType = "HASH";
-            }
-          ];
-
-          AttributeDefinitions = [
-            {
-              AttributeName = "LockID";
-              AttributeType = "S";
-            }
-          ];
-
-          BillingMode = "PAY_PER_REQUEST";
-        };
-      };
-    };
   };
 }
