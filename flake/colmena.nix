@@ -4,8 +4,9 @@
   ...
 }: {
   flake.colmena = {
-    playground = {};
     mainnet = {};
+    network-team = {};
+    playground = {};
 
     meta = {
       nixpkgs = import inputs.nixpkgs {system = "aarch64-linux";};
