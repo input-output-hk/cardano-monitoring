@@ -162,11 +162,15 @@
                     metrics_path = "/probe";
                     params.module = ["https_2xx"];
                     scrape_interval = "1m";
-                    static_configs = [
-                      {
-                        targets = import ((inputs."cardano-${name}") + "/flake/terraform/grafana/blackbox/blackbox.nix-import");
-                      }
-                    ];
+                    static_configs = let
+                      blackboxPath = (inputs."cardano-${name}") + "/flake/terraform/grafana/blackbox/blackbox.nix-import";
+                    in
+                      lib.mkIf (builtins.hasAttr "cardano-${name}" inputs && builtins.pathExists blackboxPath)
+                      [
+                        {
+                          targets = import blackboxPath;
+                        }
+                      ];
                     relabel_configs = [
                       {
                         source_labels = ["__address__"];
