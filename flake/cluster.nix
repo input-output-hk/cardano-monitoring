@@ -55,6 +55,7 @@
       tribe = "coretech";
       function = "cardano-monitoring";
       repo = "https://github.com/input-output-hk/cardano-monitoring";
+      environment = "generic";
     };
   };
 }

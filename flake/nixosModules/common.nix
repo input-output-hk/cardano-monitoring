@@ -147,55 +147,117 @@
       # https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/system_administrators_guide/ch-configuring_ntp_using_the_chrony_suite#sect-differences_between_ntpd_and_chronyd
       chrony = {
         enable = true;
+
+        # This will inform the kernel the system clock is kept synchronized and
+        # the kernel will update the real-time clock every 11 minutes.
         extraConfig = "rtcsync";
+
+        # This is not compatible with rtcsync, so disable it.
         enableRTCTrimming = false;
       };
 
-      # Disable since we use chrony
-      services.ntp.enable = false;
+      # Ensure this is disabled since we use chrony
+      ntp.enable = false;
 
+      # Very rarely things may depend on cron, or we have some ad-hoc scheduling
+      # to do, so we enable it here.
       cron.enable = true;
+
+      # Keep our log volume a little bit lower by automatically banning IPs
+      # after 3 failed SSH login attempts. We don't allow password
+      # authentication anyway, so those attempts are futile.
+      # By default fail2ban includes a rule to ban for 10 minutes.
+      # The drawback is that this does increase the SSH log volume by setting it
+      # to VERBOSE.
       fail2ban.enable = true;
 
+      # Our primary way to connect to and deploy machines.
       openssh = {
         enable = true;
         settings = {
+          # We only allow private key authentication.
           PasswordAuthentication = false;
+
+          # Ensure the RSA keys we allow are secure enough. Nobody should be
+          # using 1024 bit keys in 2024.
           RequiredRSASize = 2048;
+
+          # There's some controversy over the NIST curves, and they're not
+          # particularly popular, so let's just avoid using them.
           PubkeyAcceptedAlgorithms = "-*nist*";
         };
       };
 
+      # Metrics collection for this machine is handled by grafana-agent.
+      # For fancier configuration we could also use Vector, but this is a bit
+      # more convienent to configure and produces metrics that are compatible
+      # with more existing dashboards.
+      # The prometheus_remote_write option is specified in the monitoring module
+      # to keep this configuration common even when we add machines that aren't
+      # running Mimir.
       grafana-agent = {
         enable = true;
+
+        # Don't phone home.
         extraFlags = ["-disable-reporting"];
+
         settings = {
           integrations = {
-            prometheus_remote_write = [{url = "http://127.0.0.1:8080/mimir/api/v1/push";}];
+            # Since this is exclusively used on monitoring machines that are
+            # running Mimir, we can simply push metrics to the local instance.
+            prometheus_remote_write = [
+              {url = "http://127.0.0.1:8080/mimir/api/v1/push";}
+            ];
+
+            # https://grafana.com/docs/agent/latest/static/configuration/integrations/node-exporter-config/#node_exporter_config
             node_exporter = {
-              set_collectors = [
+              # A list of all kinds of metrics we wish to collect.
+              # We include the defaults here for better visibility.
+              enable_collectors = [
                 "boottime"
+                "cgroups"
                 "conntrack"
                 "cpu"
                 "diskstats"
                 "filefd"
                 "filesystem"
+                "interrupts"
+                "lnstat"
                 "loadavg"
+                "logind"
                 "meminfo"
                 "netdev"
                 "netstat"
+                "network_route"
                 "os"
+                "perf"
+                "processes"
+                "qdisc"
                 "sockstat"
                 "softnet"
                 "stat"
+                "sysctl"
+                "systemd"
                 "time"
                 "timex"
                 "uname"
                 "vmstat"
               ];
+
+              # Disable default collectors we're not interested in.
+              disable_collectors = [
+                "btrfs"
+                "infiniband"
+                "nfs"
+                "nfsd"
+                "tapestats"
+                "xfs"
+                "zfs"
+              ];
             };
           };
 
+          # A list of targets to scrape metrics from.
           metrics = {
             configs = [
               {
@@ -288,90 +350,57 @@
     };
 
     nix = {
+      # Ensure the default `nixpkgs` registry entry on the machine points to the
+      # exact same version as this flake instead of nixpkgs-unstable.
       registry.nixpkgs.flake = inputs.nixpkgs;
+
+      # Create hard links in the nix store to deduplicate files. This will run
+      # every day at 03:45 UTC.
       optimise.automatic = true;
+
+      # Run a garbage collection on the Nix store every day at 03:15 UTC.
       gc.automatic = true;
 
       settings = {
+        # Optimise the store during normal Nix operations as well.
         auto-optimise-store = true;
+
+        # Ensure we use binary caches for our downloads as much as possible.
         builders-use-substitutes = true;
-        experimental-features = ["nix-command" "fetch-closure" "flakes" "cgroups"];
-        keep-derivations = true;
-        keep-outputs = true;
+
+        # For Nix 2.18, we still have to enable these flags to get the required
+        # features.
+        experimental-features = ["nix-command" "flakes"];
+
+        # This option defines the maximum number of jobs that Nix will try to
+        # build in parallel. Setting it to auto will allow running as many jobs
+        # as there are CPU cores.
         max-jobs = "auto";
+
+        # On errors, always show the full trace by default.
         show-trace = true;
+
+        # We set our own Hydra as an additional binary cache.
         substituters = ["https://cache.iog.io"];
-        system-features = ["recursive-nix" "nixos-test"];
+
+        # Avoid checking remote sources for updates if they were already updated
+        # in the last 3 days.
         tarball-ttl = 60 * 60 * 72;
+
+        # That's the public key for our Hydra, ignore the seemingly wrong host
+        # name in there, we have been using the same key across a number of
+        # migrations and unfortunately named the key after that host.
         trusted-public-keys = ["hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ="];
       };
     };
 
+    # Allow firmware updates for anything with a redistributable license.
     hardware.enableRedistributableFirmware = true;
 
+    # This is the initially deployed NixOS version. Always keep this the same
+    # unless there's a pressing reason to change it.
+    # Changing this version will not actually update NixOS, but instead newer
+    # versions of packages will be used that require manual migration.
     system.stateVersion = "23.05";
-
-    systemd = {
-      services = {
-        # Remove the bootstrap key after 1 week in favor of auth-keys-hub use
-        remove-ssh-bootstrap-key = {
-          wantedBy = ["multi-user.target"];
-          after = ["network-online.target"];
-
-          serviceConfig = {
-            Type = "oneshot";
-
-            ExecStart = lib.getExe (pkgs.writeShellApplication {
-              name = "remove-ssh-bootstrap-key";
-              runtimeInputs = with pkgs; [fd gnugrep gnused];
-              text = ''
-                if ! [ -f /root/.ssh/.bootstrap-key-removed ]; then
-                  # Verify auth keys is properly hooked into sshd
-                  if ! grep -q 'AuthorizedKeysCommand /etc/ssh/auth-keys-hub --user %u' /etc/ssh/sshd_config; then
-                    echo "SSH daemon authorized keys command does not appear to have auth-keys-hub installed"
-                    exit
-                  fi
-
-                  if ! grep -q 'AuthorizedKeysCommandUser ${config.programs.auth-keys-hub.user}' /etc/ssh/sshd_config; then
-                    echo "SSH daemon authorized keys command user does not appear to be using the ${config.programs.auth-keys-hub.user} user"
-                    exit
-                  fi
-
-                  # Ensure at least 1 ssh key is declared outside of auth-keys-hub
-                  if ! grep -q -E '^ssh-' /etc/ssh/authorized_keys.d/root &> /dev/null; then
-                    echo "You must declare at least 1 authorized key via users.users.root.openssh.authorizedKeys attribute before the bootstrap key will be removed"
-                    exit
-                  fi
-
-                  # Allow 1 week of bootstrap key use before removing it
-                  if fd --quiet --changed-within 7d authorized_keys /root/.ssh; then
-                    echo "The root authorized_keys file has been changed within the past week; waiting a little longer before removing the bootstrap key"
-                    exit
-                  fi
-
-                  # Remove the bootstrap key and set a marker
-                  echo "Removing the bootstrap key from /root/.ssh/authorized_keys"
-                  sed -i '/bootstrap/d' /root/.ssh/authorized_keys
-                  touch /root/.ssh/.bootstrap-key-removed
-                fi
-              '';
-            });
-          };
-        };
-      };
-
-      timers = {
-        remove-ssh-bootstrap-key = {
-          wantedBy = ["timers.target"];
-          timerConfig = {
-            OnCalendar = "daily";
-            Unit = "remove-ssh-bootstrap-key.service";
-          };
-        };
-
-        # Enforce accurate 10 second sysstat sampling intervals
-        sysstat-collect.timerConfig.AccuracySec = "1us";
-      };
-    };
   });
 }
