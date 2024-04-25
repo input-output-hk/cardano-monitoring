@@ -48,7 +48,7 @@
     # Provides a place to store and view metrics for https://github.com/input-output-hk/cardano-mainnet
     mainnet = {};
 
-    # Provides a place to store and view metrics for https://github.com/input-output-hk/cardano-mainnet
-    network-team = {};
+    # Provides a place to store and view metrics for https://github.com/input-output-hk/ouroboros-network-ops
+    networkteam = {};
   };
 }

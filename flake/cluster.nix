@@ -46,6 +46,9 @@
 
         # Storing Mimir metrics for the mainnet cluster.
         mainnet = "${profile}-mainnet";
+
+        # Storing Mimir metrics for the networkteam cluster.
+        networkteam = "${profile}-networkteam";
       };
     };
 

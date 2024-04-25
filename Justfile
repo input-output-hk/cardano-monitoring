@@ -26,6 +26,10 @@ apply *ARGS:
 apply-all *ARGS:
   colmena apply --keep-result --verbose {{ARGS}}
 
+apply-bootstrap *ARGS:
+  #!/usr/bin/env bash
+  SSH_CONFIG=<(sed -i '6i IdentityFile .ssh_key' .ssh_config) colmena apply --verbose --on {{ARGS}}
+
 build-machine MACHINE *ARGS:
   nix build -L .#nixosConfigurations.{{MACHINE}}.config.system.build.toplevel {{ARGS}}
 
@@ -119,7 +123,7 @@ show-nameservers:
 save-bootstrap-ssh-key:
   #!/usr/bin/env nu
   print "Retrieving ssh key from tofu..."
-  nix build ".#opentofu.$WORKSPACE" --out-link tofu.tf.json
+  nix build $".#opentofu.($env.WORKSPACE)" --out-link tofu.tf.json
   tofu workspace select -or-create cluster
   tofu init -reconfigure
   let tf = (tofu show -json | from json)
@@ -130,7 +134,7 @@ save-bootstrap-ssh-key:
 save-ssh-config:
   #!/usr/bin/env nu
   print "Retrieving ssh config from tofu..."
-  nix build ".#opentofu.$WORKSPACE" --out-link tofu.tf.json
+  nix build $".#opentofu.($env.WORKSPACE)" --out-link tofu.tf.json
   tofu workspace select -or-create cluster
   # tofu init -reconfigure
   let tf = (tofu show -json | from json)
