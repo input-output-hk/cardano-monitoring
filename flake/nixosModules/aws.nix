@@ -38,7 +38,12 @@
             # The volume size was chosen initially based on our old monitoring instances.
             # Since we now store metrics in S3 instead, we currently have only
             # about 15GiB of actually required space, mostly for the nix store.
-            root_block_device.volume_size = 100;
+            root_block_device = {
+              volume_size = 100;
+              volume_type = "gp3";
+              iops = 3000;
+              delete_on_termination = true;
+            };
 
             # Setting tags on all our resources to adhere to:
             # https://github.com/input-output-hk/sre-adrs/blob/master/decisions/0001-organize-infrastructure-via-tags.md

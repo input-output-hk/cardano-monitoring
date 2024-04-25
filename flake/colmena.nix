@@ -34,6 +34,9 @@
       # Specific configuration for Grafana/Prometheus/Mimir
       # defined in flake/nixosModules/monitoring.nix
       self.nixosModules.monitoring
+      # Cleanup for the SSH bootstrap key
+      # defined in flake/nixosModules/remove-ssh-bootstrap.nix
+      self.nixosModules.remove-ssh-bootstrap-key
     ];
 
     # Every attribute apart from `meta` and `defaults` defines a machine deployment.
