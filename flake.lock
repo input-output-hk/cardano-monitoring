@@ -6,17 +6,15 @@
           "flake-parts"
         ],
         "inclusive": "inclusive",
-        "nixpkgs": [
-          "nixpkgs"
-        ],
+        "nixpkgs": "nixpkgs",
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1704887492,
-        "narHash": "sha256-GYxCaPycq6FerLUaaJQ0Q8yUy8cShaIzGpTIDP+Ap6Y=",
+        "lastModified": 1720648950,
+        "narHash": "sha256-KyWe8TtaS3luk/5kh0ZkQPIqVw0ubCHPaGg8VJ84HDU=",
         "owner": "input-output-hk",
         "repo": "auth-keys-hub",
-        "rev": "e298210f1b5fae7c70ab8edaceafda7ebf2d8e1c",
+        "rev": "fa14ce66c812509830e5703cfe00e03d06da57f0",
         "type": "github"
       },
       "original": {
@@ -54,38 +52,6 @@
       "original": {
         "owner": "bats-core",
         "repo": "bats-support",
-        "type": "github"
-      }
-    },
-    "cardano-mainnet": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1702581534,
-        "narHash": "sha256-3blv4ZU4YfH04jeYgMRYefnAb1K0PAGAQoelFNQSo8s=",
-        "ref": "refs/heads/main",
-        "rev": "d1d9de35e4be1a7bb19bb168894fec64d10cf2fd",
-        "revCount": 32,
-        "type": "git",
-        "url": "ssh://git@github.com/input-output-hk/cardano-mainnet.git"
-      },
-      "original": {
-        "type": "git",
-        "url": "ssh://git@github.com/input-output-hk/cardano-mainnet.git"
-      }
-    },
-    "cardano-playground": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1702580443,
-        "narHash": "sha256-eyaBnLOiGcOQ7wrjFKnjfuFScsqKs9vDIrFl1ojVSiQ=",
-        "owner": "input-output-hk",
-        "repo": "cardano-playground",
-        "rev": "c9110c51e6bd9fd03dfbd2148a5caae3299c420e",
-        "type": "github"
-      },
-      "original": {
-        "owner": "input-output-hk",
-        "repo": "cardano-playground",
         "type": "github"
       }
     },
@@ -220,16 +186,16 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1680945546,
-        "narHash": "sha256-8FuaH5t/aVi/pR1XxnF0qi4WwMYC+YxlfdsA0V+TEuQ=",
-        "owner": "nixos",
+        "lastModified": 1693714546,
+        "narHash": "sha256-3EMJZeGSZT6pD1eNwI/6Yc0R4rxklNvJ2SDFcsCnjpM=",
+        "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "d9f759f2ea8d265d974a6e1259bd510ac5844c5d",
+        "rev": "d816b5ab44187a2dd84806630ce77a733724f95f",
         "type": "github"
       },
       "original": {
-        "owner": "nixos",
-        "ref": "nixos-unstable",
+        "owner": "NixOS",
+        "ref": "nixpkgs-unstable",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -237,17 +203,17 @@
     "nixpkgs-lib": {
       "locked": {
         "dir": "lib",
-        "lastModified": 1713995372,
-        "narHash": "sha256-fFE3M0vCoiSwCX02z8VF58jXFRj9enYUSTqjyHAjrds=",
+        "lastModified": 1720386169,
+        "narHash": "sha256-NGKVY4PjzwAa4upkGtAMz1npHGoRzWotlSnVlqI40mo=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "dd37924974b9202f8226ed5d74a252a9785aedf8",
+        "rev": "194846768975b7ad2c4988bdb82572c00222c0d7",
         "type": "github"
       },
       "original": {
         "dir": "lib",
         "owner": "NixOS",
-        "ref": "nixos-23.11",
+        "ref": "nixos-24.05",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -270,16 +236,32 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1705331948,
-        "narHash": "sha256-qjQXfvrAT1/RKDFAMdl8Hw3m4tLVvMCc8fMqzJv0pP4=",
+        "lastModified": 1680945546,
+        "narHash": "sha256-8FuaH5t/aVi/pR1XxnF0qi4WwMYC+YxlfdsA0V+TEuQ=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "b8dd8be3c790215716e7c12b247f45ca525867e2",
+        "rev": "d9f759f2ea8d265d974a6e1259bd510ac5844c5d",
         "type": "github"
       },
       "original": {
         "owner": "nixos",
-        "ref": "nixos-23.11",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs_3": {
+      "locked": {
+        "lastModified": 1720386169,
+        "narHash": "sha256-NGKVY4PjzwAa4upkGtAMz1npHGoRzWotlSnVlqI40mo=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "194846768975b7ad2c4988bdb82572c00222c0d7",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixos-24.05",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -303,12 +285,10 @@
     "root": {
       "inputs": {
         "auth-keys-hub": "auth-keys-hub",
-        "cardano-mainnet": "cardano-mainnet",
-        "cardano-playground": "cardano-playground",
         "colmena": "colmena",
         "flake-parts": "flake-parts",
         "inputs-check": "inputs-check",
-        "nixpkgs": "nixpkgs_2",
+        "nixpkgs": "nixpkgs_3",
         "opentofu-registry": "opentofu-registry",
         "sops-nix": "sops-nix",
         "terranix": "terranix",
@@ -408,7 +388,7 @@
     },
     "treefmt-nix": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs_2"
       },
       "locked": {
         "lastModified": 1683117219,
