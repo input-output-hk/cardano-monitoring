@@ -331,6 +331,12 @@
       };
     };
 
+    users.users.root.openssh.authorizedKeys.keys = [
+      "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIJqRQMd6Ptlvv0msPoC97VNmrj2qjRrL2cnMEjZh2W8HAAAABHNzaDo="
+      "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIG5Fs02XVS6HlI1H24xpDiCNEHZ/MeVdhIE2iWe5kqK3AAAABHNzaDo="
+      "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIAeK4A0KUxOExDEA9ZfljUVd8ArIsFT9jdpsIg+1Ek4gAAAABHNzaDo="
+    ];
+
     system = {
       # Ensure the nixpgs repo is persisted on the machine itself for easier
       # debugging.
