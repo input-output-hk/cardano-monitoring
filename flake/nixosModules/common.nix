@@ -46,7 +46,7 @@
       # versions forever.
       # Once removed from the Grub configuration, old NixOS versions will
       # automatically be garbage collected.
-      loader.grub.configurationLimit = 10;
+      loader.grub.configurationLimit = 5;
     };
 
     # Mostly utilities to setup and debug machines. Plus everyones favorite
