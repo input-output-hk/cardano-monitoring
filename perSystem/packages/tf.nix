@@ -27,12 +27,12 @@
           VAR_FILE="secrets/tf/$WORKSPACE.tfvars"
         fi
 
-        echo -e "Running tofu in the ''${IGREEN}$WORKSPACE''${NC} workspace..."
+        echo -e "Running tofu in the ''${IGREEN}$WORKSPACE''${NC} workspace..." 1>&2
         rm --force tofu.tf.json
-        nix build ".#opentofu.$WORKSPACE" --out-link tofu.tf.json
+        nix build ".#opentofu.$WORKSPACE" --out-link tofu.tf.json 1>&2
 
-        tofu init -reconfigure
-        tofu workspace select -or-create "$WORKSPACE" || true
+        tofu init -reconfigure 1>&2
+        tofu workspace select -or-create "$WORKSPACE" || true 1>&2
         tofu "$@" ''${VAR_FILE:+-var-file=<("''${SOPS[@]}" "$VAR_FILE")}
       '';
     };

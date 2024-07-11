@@ -28,7 +28,8 @@ apply-all *ARGS:
 
 apply-bootstrap *ARGS:
   #!/usr/bin/env bash
-  SSH_CONFIG=<(sed -i '6i IdentityFile .ssh_key' .ssh_config) colmena apply --verbose --on {{ARGS}}
+  just ssh-bootstrap
+  SSH_CONFIG=<(sed -i '6i IdentityFile .ssh_key' .ssh_config) colmena apply --impure --keep-result --verbose --on {{ARGS}}
 
 build-machine MACHINE *ARGS:
   nix build -L .#nixosConfigurations.{{MACHINE}}.config.system.build.toplevel {{ARGS}}
@@ -159,3 +160,36 @@ mimir-bootstrap URL:
 book:
   tofu fmt docs/grafana.tf
   mdbook build docs/
+
+ls:
+  @just list-machines
+
+# List machines in the cluster
+list-machines:
+  #!/usr/bin/env nu
+  let nix = (
+    nix eval '.#nixosConfigurations'
+      --json
+      --apply 'n: (map (n: {name=n; in_nixos_conf = true;}) (builtins.attrNames n))'
+      | from json
+      | dfr into-df
+  )
+
+  let list = (
+    tofu show -json
+    | from json
+    | get values.root_module.resources
+    | where type == "aws_instance"
+    | each {|n|
+        {
+          name: $n.name,
+          public_ip: $n.values.public_ip,
+          private_ip: $n.values.private_ip
+        }
+      }
+    | dfr into-df
+    | dfr join --outer $nix name name
+    | dfr sort-by name
+  )
+
+  $list | dfr into-nu
