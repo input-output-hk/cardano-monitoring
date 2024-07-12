@@ -94,6 +94,12 @@ Then you can run `colmena` to run and apply your configuration:
     colmena build
     colmena apply
 
+Please note that the first deploy has to be made using:
+
+    just apply-bootstrap $node
+
+Because it has to use the bootstrap SSH key that the AMI was provisioned with.
+
 ### Secrets
 
 Secrets are encrypted using [SOPS](https://github.com/getsops/sops)

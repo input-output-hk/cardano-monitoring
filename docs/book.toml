@@ -1,0 +1,9 @@
+[book]
+autors = ["The Cardano Authors"]
+language = "en"
+multilingual = false
+src = "."
+title = "The Cardano Monitoring Book"
+
+[build]
+build-dir = "../static/book"

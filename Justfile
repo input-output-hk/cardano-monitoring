@@ -15,7 +15,7 @@ default:
 
 lint:
   deadnix -f
-  statix check
+  statix check -i .direnv
 
 show-flake *ARGS:
   nix flake show {{ARGS}}
@@ -25,6 +25,11 @@ apply *ARGS:
 
 apply-all *ARGS:
   colmena apply --keep-result --verbose {{ARGS}}
+
+apply-bootstrap *ARGS:
+  #!/usr/bin/env bash
+  just ssh-bootstrap
+  SSH_CONFIG=<(sed -i '6i IdentityFile .ssh_key' .ssh_config) colmena apply --impure --keep-result --verbose --on {{ARGS}}
 
 build-machine MACHINE *ARGS:
   nix build -L .#nixosConfigurations.{{MACHINE}}.config.system.build.toplevel {{ARGS}}
@@ -119,7 +124,7 @@ show-nameservers:
 save-bootstrap-ssh-key:
   #!/usr/bin/env nu
   print "Retrieving ssh key from tofu..."
-  nix build ".#opentofu.$WORKSPACE" --out-link tofu.tf.json
+  nix build ".#opentofu.{{WORKSPACE}}" --out-link tofu.tf.json
   tofu workspace select -or-create cluster
   tofu init -reconfigure
   let tf = (tofu show -json | from json)
@@ -130,7 +135,7 @@ save-bootstrap-ssh-key:
 save-ssh-config:
   #!/usr/bin/env nu
   print "Retrieving ssh config from tofu..."
-  nix build ".#opentofu.$WORKSPACE" --out-link tofu.tf.json
+  nix build ".#opentofu.{{WORKSPACE}}" --out-link tofu.tf.json
   tofu workspace select -or-create cluster
   # tofu init -reconfigure
   let tf = (tofu show -json | from json)
@@ -138,3 +143,53 @@ save-ssh-config:
   $key.values.content | save --force $env.SSH_CONFIG_FILE
   chmod 0600 $env.SSH_CONFIG_FILE
   print $"Saved to ($env.SSH_CONFIG_FILE)"
+
+kms:
+  #!/usr/bin/env nu
+  ( aws kms list-aliases
+  | from json
+  | get Aliases
+  | where AliasName == "alias/kmsKey"
+  | get AliasArn.0 )
+
+# URL example: https://playground.monitoring.aws.iohkdev.io/mimir
+mimir-bootstrap URL:
+  if not ('fallback.yml' | path exists) { print "Please create a fallback.yml file"; exit }
+  mimirtool alertmanager load --log.level=debug --address {{URL}} --id anonymous fallback.yml
+
+book:
+  tofu fmt docs/grafana.tf
+  mdbook build docs/
+
+ls:
+  @just list-machines
+
+# List machines in the cluster
+list-machines:
+  #!/usr/bin/env nu
+  let nix = (
+    nix eval '.#nixosConfigurations'
+      --json
+      --apply 'n: (map (n: {name=n; in_nixos_conf = true;}) (builtins.attrNames n))'
+      | from json
+      | dfr into-df
+  )
+
+  let list = (
+    tofu show -json
+    | from json
+    | get values.root_module.resources
+    | where type == "aws_instance"
+    | each {|n|
+        {
+          name: $n.name,
+          public_ip: $n.values.public_ip,
+          private_ip: $n.values.private_ip
+        }
+      }
+    | dfr into-df
+    | dfr join --outer $nix name name
+    | dfr sort-by name
+  )
+
+  $list | dfr into-nu
