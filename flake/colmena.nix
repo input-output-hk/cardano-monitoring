@@ -50,5 +50,8 @@
 
     # Provides a place to store and view metrics for https://github.com/input-output-hk/ouroboros-network-ops
     networkteam = {};
+
+    # Provides a place to store and view metrics for https://github.com/input-output-hk/devx-ci
+    devxci = {};
   };
 }
