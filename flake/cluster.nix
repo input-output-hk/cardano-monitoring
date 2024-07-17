@@ -49,6 +49,9 @@
 
         # Storing Mimir metrics for the networkteam cluster.
         networkteam = "${profile}-networkteam";
+
+        # Storing Mimir metrics for the devx-ci cluster.
+        devxci = "${profile}-devxci";
       };
     };
 
