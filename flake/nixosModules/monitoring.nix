@@ -269,6 +269,51 @@
           });
         };
       };
+
+      loki.configuration = {
+        limits_config.retention_period = "24h";
+        common.ring.kvstore.store = "inmemory";
+
+        server = {
+          http_listen_port = 3100;
+          grpc_listen_port = 3101;
+        };
+
+        compactor = {
+          working_directory = "/var/lib/loki/compactor";
+          compaction_interval = "10m";
+          retention_enabled = true;
+          retention_delete_delay = "2h";
+          retention_delete_worker_count = 150;
+          delete_request_store = "s3";
+        };
+
+        storage_config = {
+          tsdb_shipper = {
+            active_index_directory = "/var/lib/loki/index/active";
+            cache_location = "/var/lib/loki/index/cache";
+          };
+
+          aws = {
+            inherit (self.cluster.infra.aws) region;
+            bucketnames = buckets."${name}Loki" or (throw "Missing S3 bucket for ${name}Loki");
+            endpoint = "s3.amazonaws.com";
+          };
+        };
+
+        schema_config.configs = [
+          {
+            from = "2024-07-16";
+            store = "tsdb";
+            object_store = "s3";
+            schema = "v13";
+            index = {
+              prefix = "index_";
+              period = "24h";
+            };
+          }
+        ];
+      };
     };
   };
 }

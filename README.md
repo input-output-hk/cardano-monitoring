@@ -141,3 +141,8 @@ Once logged in, obtain administration access to Grafana:
     nix shell nixpkgs#sqlite-interactive
     sqlite3 /var/lib/grafana/data/grafana.db
     update user set is_admin = 1 where email = 'bob@example.com';
+
+Finally go to `Administration` -> `Users and access` -> `Users` and set
+permissions on your organisation to `Admin` as well.
+Once you refresh, you can start creating a service account as per the
+instructions in `grafana.tfvars`

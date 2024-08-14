@@ -3,6 +3,7 @@
     pkgs,
     self',
     config,
+    inputs',
     ...
   }: {
     # The shell you get when running `nix develop`.

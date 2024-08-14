@@ -52,6 +52,12 @@
 
         # Storing Mimir metrics for the devx-ci cluster.
         devxci = "${profile}-devxci";
+
+        # Storing Loki logs for the devx-ci cluster.
+        devxciLoki = "${profile}-devxci-loki";
+
+        # Storing Mimir metrics for the midnight cluster.
+        midnight = "${profile}-midnight";
       };
     };
 

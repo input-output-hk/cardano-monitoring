@@ -43,15 +43,21 @@
     # These are empty right now because the default imports suffice.
 
     # Provides a place to store and view metrics for https://github.com/input-output-hk/cardano-playground
-    playground = {};
+    playground = {aws.instance.root_block_device.volume_size = 100;};
 
     # Provides a place to store and view metrics for https://github.com/input-output-hk/cardano-mainnet
-    mainnet = {};
+    mainnet = {aws.instance.root_block_device.volume_size = 100;};
 
     # Provides a place to store and view metrics for https://github.com/input-output-hk/ouroboros-network-ops
-    networkteam = {};
+    networkteam = {aws.instance.root_block_device.volume_size = 100;};
 
     # Provides a place to store and view metrics for https://github.com/input-output-hk/devx-ci
-    devxci = {};
+    devxci = {
+      aws.instance.root_block_device.volume_size = 100;
+      services.loki.enable = true;
+    };
+
+    # Provides a place to store and view metrics for https://github.com/input-output-hk/midnight-ioe-mainnet
+    midnight = {};
   };
 }
