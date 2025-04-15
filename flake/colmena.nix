@@ -1,6 +1,7 @@
 {
   self,
   inputs,
+  lib,
   ...
 }: {
   # Provides a `.#colmena` output for this flake.
@@ -43,10 +44,10 @@
     # These are empty right now because the default imports suffice.
 
     # Provides a place to store and view metrics for https://github.com/input-output-hk/cardano-playground
-    playground = {};
+    playground = {services.mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";};
 
     # Provides a place to store and view metrics for https://github.com/input-output-hk/cardano-mainnet
-    mainnet = {};
+    mainnet = {services.mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";};
 
     # Provides a place to store and view metrics for https://github.com/input-output-hk/ouroboros-network-ops
     networkteam = {};
