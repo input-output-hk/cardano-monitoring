@@ -44,15 +44,25 @@
     # These are empty right now because the default imports suffice.
 
     # Provides a place to store and view metrics for https://github.com/input-output-hk/cardano-playground
-    playground = {services.mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";};
+    playground = {
+      aws.instance.root_block_device.volume_size = 100;
+      services.mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";
+    };
 
     # Provides a place to store and view metrics for https://github.com/input-output-hk/cardano-mainnet
-    mainnet = {services.mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";};
+    mainnet = {
+      aws.instance.root_block_device.volume_size = 100;
+      services.mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";
+    };
 
     # Provides a place to store and view metrics for https://github.com/input-output-hk/ouroboros-network-ops
-    networkteam = {};
+    networkteam = {
+      aws.instance.root_block_device.volume_size = 100;
+    };
 
     # Provides a place to store and view metrics for https://github.com/input-output-hk/devx-ci
-    devxci = {};
+    devxci = {
+      aws.instance.root_block_device.volume_size = 100;
+    };
   };
 }
