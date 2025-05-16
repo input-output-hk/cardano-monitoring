@@ -69,6 +69,9 @@
         aws.instance.root_block_device.volume_size = 100;
         services.loki.enable = true;
       };
+
+      # Provides a place to store and view metrics for https://github.com/midnightntwrk/gd-infrastructure
+      midnight = {};
     };
   };
 }
