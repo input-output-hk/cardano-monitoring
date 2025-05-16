@@ -126,3 +126,23 @@ The current passwords are stored in
 `secrets/caddy-environment-playground.enc`
 and
 `secrets/caddy-environment-mainnet.enc`
+
+### Grafana
+
+To enable OAuth for a new monitoring instance, you have to add it to the
+`Testnet` project under the `monitoring.aws.iohkdev.io` application.
+
+After adding the new URLs for JavaScript and redirects, you need to log into
+Grafana via OAuth.
+
+Once logged in, obtain administration access to Grafana:
+
+    just ssh yourNewServer
+    nix shell nixpkgs#sqlite-interactive
+    sqlite3 /var/lib/grafana/data/grafana.db
+    update user set is_admin = 1 where email = 'bob@example.com';
+
+Finally go to `Administration` -> `Users and access` -> `Users` and set
+permissions on your organisation to `Admin` as well.
+Once you refresh, you can start creating a service account as per the
+instructions in `grafana.tfvars`
