@@ -8,6 +8,9 @@ checkSshConfig := '''
   if not ('.ssh_config' | path exists) {
     just save-ssh-config
   }
+  if not ('.ssh_key' | path exists) {
+    just save-bootstrap-ssh-key
+  }
 '''
 
 default:
@@ -26,10 +29,22 @@ apply *ARGS:
 apply-all *ARGS:
   colmena apply --keep-result --verbose {{ARGS}}
 
-apply-bootstrap *ARGS:
-  #!/usr/bin/env bash
-  just ssh-bootstrap
-  SSH_CONFIG=<(sed -i '6i IdentityFile .ssh_key' .ssh_config) colmena apply --impure --keep-result --verbose --on {{ARGS}}
+apply-bootstrap HOSTNAME:
+  #!/usr/bin/env nu
+  {{checkSshConfig}}
+
+  ( open .ssh_config
+  | str replace
+    "Host {{HOSTNAME}}"
+    "Host {{HOSTNAME}}\n  IdentityFile .ssh_key"
+  ) | save -f .ssh_config_bootstrap
+
+  with-env {
+    SSH_CONFIG_FILE: .ssh_config_bootstrap
+  } {
+    print $"SSH_CONFIG_FILE: ($env.SSH_CONFIG_FILE)"
+    colmena apply --impure --keep-result --verbose --on {{HOSTNAME}}
+  }
 
 build-machine MACHINE *ARGS:
   nix build -L .#nixosConfigurations.{{MACHINE}}.config.system.build.toplevel {{ARGS}}
@@ -52,9 +67,6 @@ ssh HOSTNAME *ARGS:
 ssh-bootstrap HOSTNAME *ARGS:
   #!/usr/bin/env nu
   {{checkSshConfig}}
-  if not ('.ssh_key' | path exists) {
-    just save-bootstrap-ssh-key
-  }
   ssh -o LogLevel=ERROR -F .ssh_config -i .ssh_key {{HOSTNAME}} {{ARGS}}
 
 ssh-for-all *ARGS:
