@@ -67,6 +67,7 @@
       # Provides a place to store and view metrics for https://github.com/input-output-hk/devx-ci
       devxci = {
         aws.instance.root_block_device.volume_size = 100;
+        services.loki.enable = true;
       };
     };
   };

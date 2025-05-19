@@ -19,17 +19,27 @@
     mkBucket = name: {
       Type = "AWS::S3::Bucket";
       DeletionPolicy = "RetainExceptOnCreate";
-      Properties = {
-        Tags = tagWith name;
-        BucketName = name;
-        BucketEncryption.ServerSideEncryptionConfiguration = [
-          {
-            BucketKeyEnabled = false;
-            ServerSideEncryptionByDefault.SSEAlgorithm = "AES256";
-          }
-        ];
-        VersioningConfiguration.Status = "Enabled";
-      };
+      Properties =
+        {
+          Tags = tagWith name;
+          BucketName = name;
+          BucketEncryption.ServerSideEncryptionConfiguration = [
+            {
+              BucketKeyEnabled = false;
+              ServerSideEncryptionByDefault.SSEAlgorithm = "AES256";
+            }
+          ];
+          VersioningConfiguration.Status = "Enabled";
+        }
+        // (lib.optionalAttrs (lib.hasSuffix "-loki" name) {
+          LifecycleConfiguration.Rules = [
+            {
+              Id = "ExpirationRule";
+              ExpirationInDays = 365;
+              Status = "Enabled";
+            }
+          ];
+        });
     };
   in {
     AWSTemplateFormatVersion = "2010-09-09";

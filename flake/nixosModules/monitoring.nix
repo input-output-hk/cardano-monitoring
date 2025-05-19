@@ -2,6 +2,7 @@
   # Here we specify what a monitoring machine should look like.
   flake.nixosModules.monitoring = {
     config,
+    lib,
     pkgs,
     name,
     ...
@@ -114,26 +115,33 @@
             #   }
             # ];
 
-            datasources = [
-              {
-                type = "prometheus";
-                name = "Mimir";
-                uid = "mimir";
-                isDefault = true;
-                url = "http://127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}/mimir/prometheus";
-                jsonData.timeInterval = "60s";
-              }
-              {
-                type = "alertmanager";
-                name = "Alertmanager";
-                uid = "alertmanager_mimir";
-                url = "http://127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}/mimir";
-                jsonData = {
-                  implementation = "mimir";
-                  handleGrafanaManagedAlerts = true;
-                };
-              }
-            ];
+            datasources =
+              [
+                {
+                  type = "prometheus";
+                  name = "Mimir";
+                  uid = "mimir";
+                  isDefault = true;
+                  url = "http://127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}/mimir/prometheus";
+                  jsonData.timeInterval = "60s";
+                }
+                {
+                  type = "alertmanager";
+                  name = "Alertmanager";
+                  uid = "alertmanager_mimir";
+                  url = "http://127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}/mimir";
+                  jsonData = {
+                    implementation = "mimir";
+                    handleGrafanaManagedAlerts = true;
+                  };
+                }
+              ]
+              ++ lib.optional config.services.loki.enable {
+                type = "loki";
+                name = "Loki";
+                uid = "loki";
+                url = "http://127.0.0.1:${toString config.services.loki.configuration.server.http_listen_port}";
+              };
           };
         };
       };
@@ -216,28 +224,41 @@
         enableReload = true;
         inherit email;
 
-        virtualHosts."${name}.${domain}".extraConfig = ''
-          encode zstd gzip
+        virtualHosts."${name}.${domain}".extraConfig =
+          ''
+            encode zstd gzip
 
-          handle /blackbox/* {
-            basicauth { admin {$ADMIN_HASH} }
-            reverse_proxy 127.0.0.1:9115
-          }
+            handle /blackbox/* {
+              basicauth { admin {$ADMIN_HASH} }
+              reverse_proxy 127.0.0.1:9115
+            }
 
-          handle /mimir/api/v1/push {
-            basicauth { write {$WRITE_HASH} }
-            reverse_proxy 127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}
-          }
+            handle /mimir/api/v1/push {
+              basicauth { write {$WRITE_HASH} }
+              reverse_proxy 127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}
+            }
 
-          handle /mimir/* {
-            basicauth { admin {$ADMIN_HASH} }
-            reverse_proxy 127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}
-          }
+            handle /mimir/* {
+              basicauth { admin {$ADMIN_HASH} }
+              reverse_proxy 127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}
+            }
+          ''
+          + lib.optionalString config.services.loki.enable ''
+            handle /loki/api/v1/push {
+              basicauth { write {$WRITE_HASH} }
+              reverse_proxy 127.0.0.1:${toString config.services.loki.configuration.server.http_listen_port}
+            }
 
-          handle /* {
-            reverse_proxy 127.0.0.1:${toString config.services.grafana.settings.server.http_port}
-          }
-        '';
+            handle /otlp/v1/logs {
+              basicauth { write {$WRITE_HASH} }
+              reverse_proxy 127.0.0.1:${toString config.services.loki.configuration.server.http_listen_port}
+            }
+          ''
+          + ''
+            handle /* {
+              reverse_proxy 127.0.0.1:${toString config.services.grafana.settings.server.http_port}
+            }
+          '';
       };
 
       prometheus = {
@@ -268,6 +289,57 @@
             };
           });
         };
+      };
+
+      loki.configuration = {
+        auth_enabled = false;
+
+        limits_config.retention_period = "24h";
+
+        common = {
+          ring.kvstore.store = "inmemory";
+          replication_factor = 1;
+        };
+
+        server = {
+          http_listen_port = 3100;
+          grpc_listen_port = 3101;
+        };
+
+        compactor = {
+          working_directory = "/var/lib/loki/compactor";
+          compaction_interval = "10m";
+          retention_enabled = true;
+          retention_delete_delay = "2h";
+          retention_delete_worker_count = 150;
+          delete_request_store = "s3";
+        };
+
+        storage_config = {
+          tsdb_shipper = {
+            active_index_directory = "/var/lib/loki/index/active";
+            cache_location = "/var/lib/loki/index/cache";
+          };
+
+          aws = {
+            inherit (self.cluster.infra.aws) region;
+            bucketnames = buckets."${name}Loki" or (throw "Missing S3 bucket for ${name}Loki");
+            endpoint = "s3.amazonaws.com";
+          };
+        };
+
+        schema_config.configs = [
+          {
+            from = "2024-07-16";
+            store = "tsdb";
+            object_store = "s3";
+            schema = "v13";
+            index = {
+              prefix = "index_";
+              period = "24h";
+            };
+          }
+        ];
       };
     };
   };
