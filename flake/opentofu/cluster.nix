@@ -12,7 +12,7 @@
   underscore = lib.replaceStrings ["-"] ["_"];
 
   nixosConfigurations = lib.mapAttrs (_: node: node.config) config.flake.nixosConfigurations;
-  nodes = lib.filterAttrs (_: node: node.aws != null && node.aws.instance.count > 0) nixosConfigurations;
+  nodes = lib.filterAttrs (_: node: node.aws.instance.count or 0 > 0) nixosConfigurations;
   mapNodes = f: lib.mapAttrs f nodes;
 
   regions =
