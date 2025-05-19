@@ -15,8 +15,8 @@
     # Used for copying closures to the target machines.
     # We specify our cluster in flake/colmena.nix
     colmena = {
-      url = "github:zhaofengli/colmena/v0.4.0";
-      inputs.nixpkgs.follows = "nixpkgs";
+      url = "github:zhaofengli/colmena";
+      # inputs.nixpkgs.follows = "nixpkgs"; # XXX uncomment when updating nixpkgs
     };
 
     terranix = {

@@ -1,7 +1,7 @@
 {self, ...}: {
   perSystem = {
+    inputs',
     pkgs,
-    self',
     config,
     ...
   }: {
@@ -20,7 +20,7 @@
           # Used for `caddy hash-password` to provision Basic Auth
           caddy
           # Deploying NixOS
-          colmena
+          inputs'.colmena.packages.colmena
           # Formatting code
           config.treefmt.build.wrapper
           # Used by `just lint`
@@ -42,7 +42,7 @@
           # Used by `just lint`
           statix
         ])
-        ++ (with self'.packages; [
+        ++ (with config.packages; [
           # This is not in nixpkgs, but very handy for parsing the SSH config file
           # to extract information.
           # Used in the Justfile to list names and IPs
