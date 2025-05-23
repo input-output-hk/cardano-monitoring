@@ -71,7 +71,9 @@
       };
 
       # Provides a place to store and view metrics for https://github.com/midnightntwrk/gd-infrastructure
-      midnight = {};
+      midnight = {
+        services.loki.enable = true;
+      };
     };
   };
 }

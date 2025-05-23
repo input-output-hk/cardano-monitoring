@@ -58,6 +58,9 @@
 
         # Storing Mimir metrics for the midnight cluster.
         midnight = "${profile}-midnight";
+
+        # Storing Loki logs for the midnight cluster.
+        midnightLoki = "${profile}-midnight-loki";
       };
     };
 
