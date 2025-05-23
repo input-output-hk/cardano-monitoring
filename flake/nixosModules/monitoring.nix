@@ -322,9 +322,8 @@
           };
 
           aws = {
-            inherit (self.cluster.infra.aws) region;
+            s3 = "s3://${self.cluster.infra.aws.region}";
             bucketnames = buckets."${name}Loki" or (throw "Missing S3 bucket for ${name}Loki");
-            endpoint = "s3.amazonaws.com";
           };
         };
 
