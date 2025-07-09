@@ -2,14 +2,14 @@
   description = "Cardano Monitoring cluster";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-24.05";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
 
     # flake-parts is used to structure this flake. It's particularly convenient
-    # for defining outputs for different systems. But also contains lets us
+    # for defining outputs for different systems. But also lets us
     # combine different modules.
     flake-parts = {
       url = "github:hercules-ci/flake-parts";
-      inputs.nixpkgs-lib.url = "github:NixOS/nixpkgs/nixos-24.05?dir=lib";
+      inputs.nixpkgs-lib.url = "github:NixOS/nixpkgs/nixos-25.05?dir=lib";
     };
 
     # Used for copying closures to the target machines.

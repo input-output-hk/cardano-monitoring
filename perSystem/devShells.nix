@@ -34,7 +34,7 @@
           # Mostly for the handy `sponge` command
           moreutils
           # Used for most scripts in the Justfile
-          nushellFull
+          nushell
           # Used for talking with CloudFormation
           rain
           # Encryption
