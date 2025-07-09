@@ -5,9 +5,13 @@
   config,
   ...
 }: let
+  inherit (builtins) head;
+  inherit (lib) splitString;
   inherit (self.cluster.infra) aws;
 
-  amis = import "${inputs.nixpkgs}/nixos/modules/virtualisation/amazon-ec2-amis.nix";
+  deploySystem = "x86_64-linux";
+  monitorSystem = "aarch64-linux";
+
   awsProviderFor = region: "aws.${underscore region}";
   underscore = lib.replaceStrings ["-"] ["_"];
 
@@ -64,12 +68,14 @@
     });
 
     resource = {
-      aws_instance = mapNodes (_: node:
+      aws_instance = mapNodes (_: node: let
+        inherit (node.aws) region;
+      in
         {
           inherit (node.aws.instance) count instance_type tags root_block_device;
 
           provider = awsProviderFor node.aws.region;
-          ami = amis.${node.system.stateVersion}.${node.aws.region}.aarch64-linux.hvm-ebs;
+          ami = "\${data.aws_ami.nixos_${monitorSystem}_${underscore region}.id}";
           lifecycle = [{ignore_changes = ["ami" "user_data"];}];
           iam_instance_profile = "\${aws_iam_instance_profile.ec2_profile.name}";
           monitoring = true;
@@ -254,6 +260,25 @@
       aws_region.current = {};
       aws_route53_zone.selected.name = "${aws.domain}.";
 
+      aws_ami = mapRegions ({region, ...}: {
+        "nixos_${monitorSystem}_${region}" = {
+          owners = ["427812963091"];
+          most_recent = true;
+          provider = "aws.${region}";
+
+          filter = [
+            {
+              name = "name";
+              values = ["nixos/25.05*"];
+            }
+            {
+              name = "architecture";
+              values = [(head (splitString "-" monitorSystem))];
+            }
+          ];
+        };
+      });
+
       aws_s3_bucket = mapBuckets (bucket: {
         name = bucket;
         value = {inherit bucket;};
@@ -281,7 +306,7 @@
   };
 in {
   flake.opentofu.cluster = inputs.terranix.lib.terranixConfiguration {
-    system = "x86_64-linux";
+    system = deploySystem;
     modules = [allConfig];
   };
 }
