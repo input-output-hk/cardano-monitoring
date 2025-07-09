@@ -262,11 +262,11 @@
     "opentofu-registry": {
       "flake": false,
       "locked": {
-        "lastModified": 1752094118,
-        "narHash": "sha256-n3GMRb4owfVlA2EqM+1eOUDFkqtwRZr/UyDD+OEqptg=",
+        "lastModified": 1748472432,
+        "narHash": "sha256-ANRP7FE1tJ5iCis7t6xUhHSAnCQyxsajDLuZBdHRAV8=",
         "owner": "opentofu",
-        "repo": "registry-stable",
-        "rev": "663f4c33aa7942329b5705b178c533741f4595e4",
+        "repo": "registry",
+        "rev": "23d891c951b0f6dfd0681f2236f6838d522b11a8",
         "type": "github"
       },
       "original": {
