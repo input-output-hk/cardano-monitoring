@@ -4,23 +4,28 @@
   lib,
   config,
   ...
-}: let
-  inherit (builtins) head;
-  inherit (lib) splitString;
+}:
+with builtins;
+with lib; let
   inherit (self.cluster.infra) aws;
 
   deploySystem = "x86_64-linux";
-  monitorSystem = "aarch64-linux";
+  monitorSystem = "arm64-linux";
 
   awsProviderFor = region: "aws.${underscore region}";
-  underscore = lib.replaceStrings ["-"] ["_"];
+  underscore = replaceStrings ["-"] ["_"];
 
-  nixosConfigurations = lib.mapAttrs (_: node: node.config) config.flake.nixosConfigurations;
-  nodes = lib.filterAttrs (_: node: node.aws.instance.count or 0 > 0) nixosConfigurations;
-  mapNodes = f: lib.mapAttrs f nodes;
+  nixosConfigurations = mapAttrs (_: node: node.config) config.flake.nixosConfigurations;
+  nodes =
+    filterAttrs (
+      name: node:
+        (traceVerbose "Evaluating machine: ${name}" node.aws != null) && node.aws.instance.count > 0
+    )
+    nixosConfigurations;
+  mapNodes = f: mapAttrs f nodes;
 
   regions =
-    lib.mapAttrsToList (region: enabled: {
+    mapAttrsToList (region: enabled: {
       region = underscore region;
       count =
         if enabled
@@ -29,11 +34,11 @@
     })
     aws.regions;
 
-  mapRegions = f: builtins.foldl' lib.recursiveUpdate {} (lib.forEach regions f);
+  mapRegions = f: foldl' recursiveUpdate {} (forEach regions f);
 
-  buckets = builtins.attrValues (lib.filterAttrs (name: _: name != "state") aws.buckets);
+  buckets = attrValues (filterAttrs (name: _: name != "state") aws.buckets);
 
-  mkSecurityGroupRule = lib.recursiveUpdate {
+  mkSecurityGroupRule = recursiveUpdate {
     protocol = "tcp";
     cidr_blocks = ["0.0.0.0/0"];
     ipv6_cidr_blocks = ["::/0"];
@@ -42,7 +47,7 @@
     self = true;
   };
 
-  mapBuckets = fn: lib.listToAttrs (map fn buckets);
+  mapBuckets = fn: listToAttrs (map fn buckets);
 
   allConfig = {
     terraform = {
@@ -61,7 +66,7 @@
       };
     };
 
-    provider.aws = lib.forEach (builtins.attrNames aws.regions) (region: {
+    provider.aws = forEach (attrNames aws.regions) (region: {
       inherit region;
       alias = underscore region;
       default_tags.tags = self.cluster.infra.generic;
@@ -75,7 +80,7 @@
           inherit (node.aws.instance) count instance_type tags root_block_device;
 
           provider = awsProviderFor node.aws.region;
-          ami = "\${data.aws_ami.nixos_${monitorSystem}_${underscore region}.id}";
+          ami = "\${data.aws_ami.nixos_${underscore monitorSystem}_${underscore region}.id}";
           lifecycle = [{ignore_changes = ["ami" "user_data"];}];
           iam_instance_profile = "\${aws_iam_instance_profile.ec2_profile.name}";
           monitoring = true;
@@ -88,7 +93,7 @@
             http_tokens = "optional";
           };
         }
-        // lib.optionalAttrs (node.aws.instance ? availability_zone) {
+        // optionalAttrs (node.aws.instance ? availability_zone) {
           inherit (node.aws.instance) availability_zone;
         });
 
@@ -99,7 +104,7 @@
 
       aws_iam_role.ec2_role = {
         name = "ec2Role";
-        assume_role_policy = builtins.toJSON {
+        assume_role_policy = toJSON {
           Version = "2012-10-17";
           Statement = [
             {
@@ -121,22 +126,37 @@
 
       aws_iam_role_policy_attachment = let
         mkRoleAttachments = roleResourceName: policyList:
-          lib.listToAttrs (map (policy: {
+          listToAttrs (map (policy:
+            if isString policy
+            then {
               name = "${roleResourceName}_policy_attachment_${policy}";
               value = {
                 role = "\${aws_iam_role.${roleResourceName}.name}";
                 policy_arn = "\${aws_iam_policy.${policy}.arn}";
               };
+            }
+            else {
+              name = "${roleResourceName}_policy_attachment_${policy.name}";
+              value = {
+                role = "\${aws_iam_role.${roleResourceName}.name}";
+                policy_arn = policy.arn;
+              };
             })
-            policyList);
+          policyList);
       in
-        builtins.foldl' lib.recursiveUpdate {} [
-          (mkRoleAttachments "ec2_role" ["kms_user"])
+        foldl' recursiveUpdate {} [
+          (mkRoleAttachments "ec2_role" [
+            "kms_user"
+            {
+              name = "ssm";
+              arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore";
+            }
+          ])
         ];
 
       aws_iam_policy.kms_user = {
         name = "kmsUser";
-        policy = builtins.toJSON {
+        policy = toJSON {
           Version = "2012-10-17";
           Statement = [
             {
@@ -242,11 +262,17 @@
             ServerAliveInterval 60
 
           ${
-            builtins.concatStringsSep "\n" (map (name: ''
+            concatStringsSep "\n" (map (name: ''
                 Host ${name}
+                  HostName ''${aws_instance.${name}[0].id}
+                  ProxyCommand sh -c "aws --region ${nodes.${name}.aws.region} ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
+                  Tag ${nodes.${name}.aws.instance.instance_type}
+
+                Host ${name}.ipv4
                   HostName ''${aws_eip.${name}[0].public_ip}
+                  Tag ${nodes.${name}.aws.region}
               '')
-              (builtins.attrNames nodes))
+              (attrNames nodes))
           }
         '';
       };
@@ -261,7 +287,7 @@
       aws_route53_zone.selected.name = "${aws.domain}.";
 
       aws_ami = mapRegions ({region, ...}: {
-        "nixos_${monitorSystem}_${region}" = {
+        "nixos_${underscore monitorSystem}_${underscore region}" = {
           owners = ["427812963091"];
           most_recent = true;
           provider = "aws.${region}";
