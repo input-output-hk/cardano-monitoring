@@ -60,14 +60,14 @@ aws-sso-export FILE="aws-sso.sh" AWS_PROFILE=null *ARGS:
     echo "ERROR: Either a recipe AWS_PROFILE arg must be given or the env var AWS_PROFILE must be set."
   fi
 
-  if ! aws sts get-caller-identity --profile "$AWS_PROFILE" &> /dev/null; then
+  if ! aws sts get-caller-identity --profile "$AWS_PROFILE" | grep "arn:aws:sts" &> /dev/null; then
     echo
     nu -c 'print $"(ansi "bg_light_red")Please run:(ansi reset) `just aws-sso-login` first to obtain sso credentials"'
     exit 1
   fi
 
   echo
-  aws configure export-credentials --format env *ARGS > {{FILE}}
+  aws configure export-credentials --format env {{ARGS}} > {{FILE}}
 
 # Login to aws sso
 aws-sso-login AWS_PROFILE=null *ARGS:
