@@ -37,6 +37,8 @@
           nushell
           # Used for talking with CloudFormation
           rain
+          # Used for ssh sessions via aws scm
+          ssm-session-manager-plugin
           # Encryption
           sops
           # Used by `just lint`

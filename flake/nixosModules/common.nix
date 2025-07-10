@@ -10,7 +10,10 @@
     lib,
     config,
     ...
-  }: {
+  }: let
+    inherit (builtins) hasAttr toFile;
+    inherit (lib) concatMapStringsSep getExe mkIf optionalString pathExists;
+  in {
     # Where colmena should deploy to, since we do not want to hardcode any IP
     # address, and not every host may have a DNS entry, we instead set this to
     # the same name as in the colmena configuration.
@@ -30,7 +33,7 @@
     # Ensures that all logging is done in UTC to make log aggregation easier.
     time.timeZone = "UTC";
 
-    # By only supporting english, we reduce the size of our system closure a
+    # By only supporting English, we reduce the size of our system closure a
     # bit. This comes at the cost of a higher initial build time since many
     # derivations depend on the locales.
     i18n.supportedLocales = ["en_US.UTF-8/UTF-8" "en_US/ISO-8859-1"];
@@ -49,46 +52,264 @@
       loader.grub.configurationLimit = 5;
     };
 
-    # Mostly utilities to setup and debug machines. Plus everyones favorite
-    # editors.
-    environment.systemPackages = with pkgs; [
-      awscli2
-      bat
-      bind
-      # Useful for the `growpart` utility, which can be used after resizing
-      # a volume.
-      cloud-utils
-      di
-      dnsutils
-      fd
-      fx
-      file
-      gitMinimal
-      # More of a comprehensive dashboard than htop, but requires more resources
-      # and provides no control
-      glances
-      helix
-      # Easily see what's going on with a machine.
-      htop
-      ijq
-      # Diff on steroids
-      icdiff
-      iptables
-      jiq
-      jq
-      lsof
-      neovim
-      ncdu
-      parted
-      pciutils
-      procps
-      ripgrep
-      rsync
-      sops
-      sysstat
-      tcpdump
-      tree
-    ];
+    environment = {
+      etc."alloy/config.alloy".source = let
+        blackboxPath = (inputs."cardano-${name}") + "/flake/terraform/grafana/blackbox/blackbox.nix-import";
+
+        blackboxTarget =
+          if (hasAttr "cardano-${name}" inputs && pathExists blackboxPath)
+          then import blackboxPath
+          else null;
+
+        alloyCfg' = toFile "alloy-unformatted.config" ''
+          // Log setup
+          logging {
+            level = "debug"
+            format = "logfmt"
+          }
+
+          // Live debug setup: experimental, but useful for relabel component investigation
+          livedebugging {
+            enabled = true
+          }
+
+          // Default prometheus remote write target
+          prometheus.remote_write "integrations" {
+            endpoint {
+              url = "http://127.0.0.1:8080/mimir/api/v1/push"
+            }
+          }
+
+          // Default grafana alloy integration components, in lowest to highest dependency order
+          prometheus.exporter.self "integrations_alloy" {}
+
+          discovery.relabel "integrations_alloy" {
+            targets = prometheus.exporter.self.integrations_alloy.targets
+
+            rule {
+              source_labels = ["alloy_hostname"]
+              target_label = "instance"
+            }
+
+            rule {
+              regex = "^alloy_hostname$"
+              action = "labeldrop"
+            }
+
+            rule {
+              target_label = "instance"
+              replacement = "${name}"
+            }
+
+            rule {
+              target_label = "job"
+              replacement = "integrations/alloy-monitoring-check"
+            }
+          }
+
+          prometheus.scrape "integrations_alloy" {
+            targets = discovery.relabel.integrations_alloy.output
+            forward_to = [prometheus.relabel.integrations_alloy.receiver]
+            job_name = "integrations/alloy"
+          }
+
+          prometheus.relabel "integrations_alloy" {
+            forward_to = [prometheus.remote_write.integrations.receiver]
+
+            rule {
+              source_labels = ["__name__"]
+              regex = "^alloy_build.*|alloy_resources.*|prometheus_remote_write_wal_samples_appended_total|prometheus_sd_discovered_targets|process_start_time_seconds|prometheus_target_.*|up$"
+              action = "keep"
+            }
+          }
+
+          // Default grafana alloy node exporter integration components, in lowest to highest dependency order
+          prometheus.exporter.unix "integrations_node_exporter" {
+            set_collectors = [${
+            concatMapStringsSep ", " (s: "\"${s}\"") [
+              "boottime"
+              "cgroups"
+              "conntrack"
+              "cpu"
+              "diskstats"
+              "filefd"
+              "filesystem"
+              "interrupts"
+              "lnstat"
+              "loadavg"
+              "logind"
+              "meminfo"
+              "netdev"
+              "netstat"
+              "network_route"
+              "os"
+              "perf"
+              "processes"
+              "qdisc"
+              "sockstat"
+              "softnet"
+              "stat"
+              "sysctl"
+              "systemd"
+              "time"
+              "timex"
+              "uname"
+              "vmstat"
+            ]
+          }]}
+
+          discovery.relabel "integrations_node_exporter" {
+            targets = prometheus.exporter.unix.integrations_node_exporter.targets
+
+            rule {
+              source_labels = ["alloy_hostname"]
+              target_label = "instance"
+            }
+
+            rule {
+              regex = "^alloy_hostname$"
+              action = "labeldrop"
+            }
+
+            rule {
+              target_label = "instance"
+              replacement = "${name}"
+            }
+
+            rule {
+              target_label = "job"
+              replacement = "integrations/node_exporter"
+            }
+          }
+
+          prometheus.scrape "integrations_node_exporter" {
+            targets = discovery.relabel.integrations_node_exporter.output
+            forward_to = [prometheus.relabel.integrations_node_exporter.receiver]
+            job_name = "integrations/node_exporter"
+          }
+
+          prometheus.relabel "integrations_node_exporter" {
+            forward_to = [prometheus.remote_write.integrations.receiver]
+
+            // Extra rules can be added here as needed:
+            // rule {
+            //   source_labels = ["mode"]
+            //   regex = "^|system|user|iowait|steal|idle$"
+            //   action = "keep"
+            // }
+          }
+
+          prometheus.scrape "integrations_prometheus" {
+            scheme = "http"
+            targets = [{
+              __address__ = "${config.services.prometheus.listenAddress}:${toString config.services.prometheus.port}",
+            }]
+            forward_to = [prometheus.remote_write.integrations.receiver]
+            job_name = "integrations/prometheus"
+            metrics_path = "/metrics"
+          }
+
+          prometheus.scrape "integrations_mimir" {
+            scheme = "http"
+            targets = [{
+              __address__ = "${config.services.mimir.configuration.server.http_listen_address}:${toString config.services.mimir.configuration.server.http_listen_port}",
+            }]
+            forward_to = [prometheus.remote_write.integrations.receiver]
+            job_name = "integrations/mimir"
+            metrics_path = "/mimir/metrics"
+          }
+
+          prometheus.scrape "integrations_grafana" {
+            scheme = "http"
+            targets = [{
+              __address__ = "${config.services.grafana.settings.server.http_addr}:${toString config.services.grafana.settings.server.http_port}",
+            }]
+            forward_to = [prometheus.remote_write.integrations.receiver]
+            job_name = "integrations/grafana"
+            metrics_path = "/metrics"
+          }
+
+          prometheus.scrape "integrations_blackbox" {
+            scheme = "http"
+            targets = [${optionalString (blackboxTarget != null) ''
+              {__address__ = "${blackboxTarget}",}''}]
+            params = {module = ["https_2xx"]}
+            forward_to = [prometheus.remote_write.integrations.receiver]
+            job_name = "integrations/blackbox"
+            metrics_path = "/probe"
+          }
+
+          prometheus.relabel "integrations_blackbox" {
+            forward_to = [prometheus.remote_write.integrations.receiver]
+
+            rule {
+              source_labels = ["__address__"]
+              target_label = "__param_target"
+            }
+
+            rule {
+              source_labels = ["__param_target"]
+              target_label = "instance"
+            }
+
+            rule {
+              replacement = "127.0.0.1:9115"
+              target_label = "__address__"
+            }
+          }
+        '';
+      in
+        (pkgs.runCommandNoCCLocal "alloy.config" {} ''
+          ${getExe config.services.alloy.package} fmt ${alloyCfg'} > $out
+        '')
+        .out;
+
+      # Mostly utilities to setup and debug machines. Plus everyone's favorite
+      # editors.
+      systemPackages = with pkgs; [
+        awscli2
+        age
+        bat
+        bind
+        # Useful for the `growpart` utility, which can be used after resizing
+        # a volume.
+        cloud-utils
+        di
+        dnsutils
+        fd
+        fx
+        file
+        gitMinimal
+        # More of a comprehensive dashboard than htop, but requires more resources
+        # and provides no control
+        glances
+        helix
+        # Easily see what's going on with a machine.
+        htop
+        # Diff on steroids
+        icdiff
+        ijq
+        iptables
+        jiq
+        jq
+        lsof
+        neovim
+        ncdu
+        parted
+        pciutils
+        procps
+        ripgrep
+        rsync
+        ssm-session-manager-plugin
+        smem
+        ssh-to-age
+        sops
+        sysstat
+        tcpdump
+        tree
+        wget
+      ];
+    };
 
     sops = {
       # Ensure we always read and write things as they are, and not interpret them as YAML or JSON.
@@ -123,9 +344,8 @@
     #     partOf = ["sops-secrets.service"];
     #   };
     #
-    systemd.services.sops-secrets = lib.mkIf (config.system.activationScripts.setupSecrets ? text) {
+    systemd.services.sops-secrets = mkIf (config.system.activationScripts.setupSecrets ? text) {
       wantedBy = ["multi-user.target"];
-      after = ["network-online.target"];
 
       script = config.system.activationScripts.setupSecrets.text;
 
@@ -222,146 +442,22 @@
         };
       };
 
-      # Metrics collection for this machine is handled by grafana-agent.
+      # Metrics collection for this machine is handled by grafana alloy.
       # For fancier configuration we could also use Vector, but this is a bit
-      # more convienent to configure and produces metrics that are compatible
+      # more convenient to configure and produces metrics that are compatible
       # with more existing dashboards.
       # The prometheus_remote_write option is specified in the monitoring module
       # to keep this configuration common even when we add machines that aren't
       # running Mimir.
-      grafana-agent = {
+      alloy = {
         enable = true;
 
-        # Don't phone home.
-        extraFlags = ["-disable-reporting"];
-
-        settings = {
-          integrations = {
-            # Since this is exclusively used on monitoring machines that are
-            # running Mimir, we can simply push metrics to the local instance.
-            prometheus_remote_write = [
-              {url = "http://127.0.0.1:8080/mimir/api/v1/push";}
-            ];
-
-            # https://grafana.com/docs/agent/latest/static/configuration/integrations/node-exporter-config/#node_exporter_config
-            node_exporter = {
-              # A list of all kinds of metrics we wish to collect.
-              # We include the defaults here for better visibility.
-              enable_collectors = [
-                "boottime"
-                "cgroups"
-                "conntrack"
-                "cpu"
-                "diskstats"
-                "filefd"
-                "filesystem"
-                "interrupts"
-                "lnstat"
-                "loadavg"
-                "logind"
-                "meminfo"
-                "netdev"
-                "netstat"
-                "network_route"
-                "os"
-                "perf"
-                "processes"
-                "qdisc"
-                "sockstat"
-                "softnet"
-                "stat"
-                "sysctl"
-                "systemd"
-                "time"
-                "timex"
-                "uname"
-                "vmstat"
-              ];
-
-              # Disable default collectors we're not interested in.
-              disable_collectors = [
-                "btrfs"
-                "infiniband"
-                "nfs"
-                "nfsd"
-                "tapestats"
-                "xfs"
-                "zfs"
-              ];
-            };
-          };
-
-          # A list of targets to scrape metrics from.
-          metrics = {
-            configs = [
-              {
-                name = "integrations";
-                remote_write = [{url = "http://127.0.0.1:8080/mimir/api/v1/push";}];
-                scrape_configs = [
-                  {
-                    job_name = "blackbox";
-                    metrics_path = "/probe";
-                    params.module = ["https_2xx"];
-                    scrape_interval = "1m";
-                    static_configs = let
-                      blackboxPath = (inputs."cardano-${name}") + "/flake/terraform/grafana/blackbox/blackbox.nix-import";
-                    in
-                      lib.mkIf (builtins.hasAttr "cardano-${name}" inputs && builtins.pathExists blackboxPath)
-                      [
-                        {
-                          targets = import blackboxPath;
-                        }
-                      ];
-                    relabel_configs = [
-                      {
-                        source_labels = ["__address__"];
-                        target_label = "__param_target";
-                      }
-                      {
-                        source_labels = ["__param_target"];
-                        target_label = "instance";
-                      }
-                      {
-                        replacement = "127.0.0.1:9115";
-                        target_label = "__address__";
-                      }
-                    ];
-                  }
-                  {
-                    job_name = "prometheus";
-                    scheme = "http";
-                    static_configs = [
-                      {
-                        targets = ["${config.services.prometheus.listenAddress}:${toString config.services.prometheus.port}"];
-                      }
-                    ];
-                    metrics_path = "/metrics";
-                  }
-                  {
-                    job_name = "mimir";
-                    scheme = "http";
-                    static_configs = [
-                      {
-                        targets = ["${config.services.mimir.configuration.server.http_listen_address}:${toString config.services.mimir.configuration.server.http_listen_port}"];
-                      }
-                    ];
-                    metrics_path = "/mimir/metrics";
-                  }
-                  {
-                    job_name = "grafana";
-                    scheme = "http";
-                    static_configs = [
-                      {
-                        targets = ["${config.services.grafana.settings.server.http_addr}:${toString config.services.grafana.settings.server.http_port}"];
-                      }
-                    ];
-                    metrics_path = "/metrics";
-                  }
-                ];
-              }
-            ];
-          };
-        };
+        # Don't phone home and allow use of experimental features if needed,
+        # such as live debugging.
+        extraFlags = [
+          "--disable-reporting"
+          "--stability.level=experimental"
+        ];
       };
     };
 
@@ -398,8 +494,13 @@
       # every day at 03:45 UTC.
       optimise.automatic = true;
 
-      # Run a garbage collection on the Nix store every day at 03:15 UTC.
-      gc.automatic = true;
+      gc = {
+        # Run a garbage collection on the Nix store every day at 03:15 UTC.
+        automatic = true;
+
+        # Minimize security vulnerability positive scan results by flushing old closures
+        options = "--delete-older-than 30d";
+      };
 
       settings = {
         # Optimise the store during normal Nix operations as well.
