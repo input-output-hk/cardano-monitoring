@@ -1,9 +1,13 @@
+import? 'scripts/recipes/aws.just'
+
 set shell := ["nu", "-c"]
 set positional-arguments
 
 alias terraform := tofu
 alias tf := tofu
 
+# Defaults
+null := ""
 AWS_PROFILE := 'cardano-monitoring'
 AWS_REGION := 'eu-central-1'
 WORKSPACE := 'cluster'
