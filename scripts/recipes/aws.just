@@ -85,3 +85,32 @@ aws-sso-login AWS_PROFILE=null *ARGS:
 
   echo
   aws sso login --profile "$PROFILE" {{ARGS}}
+
+# Deploy a cloudFormation stack
+cf STACKNAME:
+  #!/usr/bin/env nu
+  nix eval --json '.#cloudFormation.{{STACKNAME}}' | from json | save --force '{{STACKNAME}}.json'
+  rain deploy --debug --termination-protection --yes {{STACKNAME}}.json
+
+# Show the full kms key ARN
+kms:
+  #!/usr/bin/env nu
+  ( aws kms list-aliases
+  | from json
+  | get Aliases
+  | where AliasName == "alias/kmsKey"
+  | get AliasArn.0 )
+
+# Update aws ec2 default machine spec
+update-aws-ec2-spec profile=AWS_PROFILE region=AWS_REGION:
+  #!/usr/bin/env nu
+  let spec = (
+    do -c { aws ec2 --profile {{profile}} --region {{region}} describe-instance-types }
+    | from json
+    | get InstanceTypes
+    | select InstanceType MemoryInfo VCpuInfo
+    | reject VCpuInfo.ValidCores? VCpuInfo.ValidThreadsPerCore?
+    | sort-by InstanceType
+  )
+  mkdir flakeModules/aws/
+  {InstanceTypes: $spec} | save --force flakeModules/aws/ec2-spec.json
