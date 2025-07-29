@@ -245,22 +245,13 @@ ssh-list TYPE PATTERN:
 
 # Run tofu cmds
 tofu *ARGS:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  IGREEN='\033[1;92m'
-  IRED='\033[1;91m'
-  NC='\033[0m'
-  SOPS=("sops" "--input-type" "binary" "--output-type" "binary" "--decrypt")
-
-  # There is currently only a "cluster" workspace which is in use
-  WORKSPACE="cluster"
-
-  echo -e "Running tofu in the ${IGREEN}$WORKSPACE${NC} workspace..."
+  #!/usr/bin/env nu
+  print $"Running tofu in the (ansi green){{WORKSPACE}}(ansi reset) workspace..."
   rm --force tofu.tf.json
-  nix build ".#opentofu.$WORKSPACE" --out-link tofu.tf.json
+  nix build ".#opentofu.{{WORKSPACE}}" --out-link tofu.tf.json
 
   tofu init -reconfigure
-  tofu workspace select -or-create "$WORKSPACE"
+  tofu workspace select -or-create {{WORKSPACE}}
   tofu {{ARGS}}
 
 # Save the cluster bootstrap ssh key
