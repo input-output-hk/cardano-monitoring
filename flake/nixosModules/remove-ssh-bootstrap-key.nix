@@ -26,7 +26,6 @@
 
       services.remove-ssh-bootstrap-key = {
         wantedBy = ["multi-user.target"];
-        after = ["network-online.target"];
 
         serviceConfig = {
           Type = "oneshot";

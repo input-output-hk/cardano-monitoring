@@ -1,5 +1,13 @@
+import? 'scripts/recipes/aws.just'
+
 set shell := ["nu", "-c"]
 set positional-arguments
+
+alias terraform := tofu
+alias tf := tofu
+
+# Defaults
+null := ""
 AWS_PROFILE := 'cardano-monitoring'
 AWS_REGION := 'eu-central-1'
 WORKSPACE := 'cluster'
@@ -13,22 +21,19 @@ checkSshConfig := '''
   }
 '''
 
+# List all just recipes available
 default:
   @just --list
 
-lint:
-  deadnix -f
-  statix check -i .direnv
-
-show-flake *ARGS:
-  nix flake show {{ARGS}}
-
+# Deploy select machines
 apply *ARGS:
   colmena apply --keep-result --verbose --on {{ARGS}}
 
+# Deploy all machines
 apply-all *ARGS:
   colmena apply --keep-result --verbose {{ARGS}}
 
+# Deploy select machines with the bootstrap key
 apply-bootstrap HOSTNAME:
   #!/usr/bin/env nu
   {{checkSshConfig}}
@@ -43,96 +48,206 @@ apply-bootstrap HOSTNAME:
     SSH_CONFIG_FILE: .ssh_config_bootstrap
   } {
     print $"SSH_CONFIG_FILE: ($env.SSH_CONFIG_FILE)"
-    colmena apply --impure --keep-result --verbose --on {{HOSTNAME}}
+    colmena apply --keep-result --verbose --on {{HOSTNAME}}
   }
 
+# Generate repo docs
+book:
+  tofu fmt docs/grafana.tf
+  mdbook build docs/
+
+# Build a nixos configuration
 build-machine MACHINE *ARGS:
   nix build -L .#nixosConfigurations.{{MACHINE}}.config.system.build.toplevel {{ARGS}}
 
+# Build all nixosConfigurations
 build-machines *ARGS:
   #!/usr/bin/env nu
   let nodes = (nix eval --json '.#nixosConfigurations' --apply builtins.attrNames | from json)
   for node in $nodes {just build-machine $node {{ARGS}}}
 
+# Standard lint check
+lint:
+  deadnix -f
+  statix check -i .direnv
+
+# List machines in the cluster
+list-machines:
+  #!/usr/bin/env nu
+
+  def safe-run [block msg] {
+    let res = (do -i $block | complete)
+    if $res.exit_code != 0 {
+      print $msg
+      print "The output was:"
+      print
+      print $res
+      exit 1
+    }
+    $res.stdout
+  }
+
+  def default-row [machine] {
+    {
+      Name: $machine,
+      Nix: $"(ansi green)OK",
+      pubIpv4: $"(ansi red)--",
+      # pubIpv6: $"(ansi red)--",
+      Id: $"(ansi red)--",
+      Type: $"(ansi red)--"
+      Region: $"(ansi red)--"
+    }
+  }
+
+  def main [] {
+    {{checkSshConfig}}
+
+    let nixosJson = (safe-run { ^nix eval --json ".#nixosConfigurations" --apply "builtins.attrNames" } "Nix eval failed.")
+    let sshJson = (safe-run { ^scj dump /dev/stdout -c .ssh_config } "scj failed.")
+
+    let baseTable = ($nixosJson | from json | each { |it| default-row $it })
+    let sshTable = ($sshJson | from json | where {|e| $e | get -i HostName | is-not-empty } | reject -i ProxyCommand)
+
+    let mergeTable = (
+      $sshTable | reduce --fold $baseTable { |it, acc|
+        let host = $it.Host
+        let hostData = $it.HostName
+        let machine = ($host | str replace -r '\.ipv(4|6)$' '')
+
+        let update = if ($host | str ends-with ".ipv4") {
+          { pubIpv4: $hostData, Region: $it.Tag }
+        # } else if ($host | str ends-with ".ipv6") {
+        #   { pubIpv6: $hostData }
+        } else {
+          { Id: $hostData, Type: $it.Tag }
+        }
+
+        if ($acc | any {|row| $row.Name == $machine }) {
+          $acc | each {|row|
+            if $row.Name == $machine {
+              $row | merge $update
+            } else {
+              $row
+            }
+          }
+        } else {
+          $acc ++ [ (default-row $machine | merge $update) ]
+        }
+      }
+    )
+
+    $mergeTable
+      | sort-by Name
+      | enumerate
+      | each { |r| { index: ($r.index + 1) } | merge $r.item }
+  }
+
+# Alias for list-machines recipe
+ls:
+  @just list-machines
+
+# Bootstrap a mimir url
+mimir-bootstrap URL:
+  # URL example: https://playground.monitoring.aws.iohkdev.io/mimir
+  if not ('fallback.yml' | path exists) { print "Please create a fallback.yml file"; exit }
+  mimirtool alertmanager load --log.level=debug --address {{URL}} --id anonymous fallback.yml
+
+# Scp using repo ssh config
 scp *ARGS:
   #!/usr/bin/env nu
   {{checkSshConfig}}
   scp -o LogLevel=ERROR -F .ssh_config {{ARGS}}
 
+# Show nix flake details
+show-flake *ARGS:
+  nix flake show --allow-import-from-derivation {{ARGS}}
+
+# Ssh using repo ssh config
 ssh HOSTNAME *ARGS:
   #!/usr/bin/env nu
   {{checkSshConfig}}
   ssh -o LogLevel=ERROR -F .ssh_config {{HOSTNAME}} {{ARGS}}
 
+# Ssh using cluster bootstrap key
 ssh-bootstrap HOSTNAME *ARGS:
   #!/usr/bin/env nu
   {{checkSshConfig}}
   ssh -o LogLevel=ERROR -F .ssh_config -i .ssh_key {{HOSTNAME}} {{ARGS}}
 
+# Ssh to all
 ssh-for-all *ARGS:
   #!/usr/bin/env nu
   let nodes = (nix eval --json '.#nixosConfigurations' --apply builtins.attrNames | from json)
-  $nodes | par-each {|node| just ssh -q $node {{ARGS}}}
+  $nodes | par-each {|node|
+    let result = (do -i { ^just ssh -q $node {{ARGS}} } | complete)
+    {
+      index: $node,
+      result: $result
+    }
+  }
 
+# Ssh for select
 ssh-for-each HOSTNAMES *ARGS:
   colmena exec --verbose --parallel 0 --on {{HOSTNAMES}} {{ARGS}}
 
-ssh-list-ips HOSTNAME_REGEX_PATTERN:
+# List machine id, ipv4, name, region or type based on regex pattern
+ssh-list TYPE PATTERN:
   #!/usr/bin/env nu
-  {{checkSshConfig}}
-  ( scj dump /dev/stdout -c .ssh_config
-  | from json
-  | default "" Host
-  | default "" HostName
-  | where Host =~ {{HOSTNAME_REGEX_PATTERN}} and HostName != ""
-  | get HostName
-  | str join " " )
+  const type = "{{TYPE}}"
 
-ssh-list-names HOSTNAME_REGEX_PATTERN:
-  #!/usr/bin/env nu
-  {{checkSshConfig}}
-  ( scj dump /dev/stdout -c .ssh_config
-  | from json
-  | default "" Host
-  | default "" HostName
-  | where Host =~ {{HOSTNAME_REGEX_PATTERN}} and HostName != ""
-  | get Host
-  | str join " " )
-
-cf STACKNAME:
-  #!/usr/bin/env nu
-  nix eval --json '.#cloudFormation.{{STACKNAME}}' | from json | save --force '{{STACKNAME}}.json'
-  rain deploy --debug --termination-protection --yes {{STACKNAME}}.json
-
-tf *ARGS:
-  tf {{ARGS}}
-
-# To describe instance types, any valid aws profile can be provided
-# Default region for specs will be eu-central-1 which provides ~600 machine definitions.
-update-aws-ec2-spec profile=AWS_PROFILE region=AWS_REGION:
-  #!/usr/bin/env nu
-  let spec = (
-    do -c { aws ec2 --profile {{profile}} --region {{region}} describe-instance-types }
-    | from json
-    | get InstanceTypes
-    | select InstanceType MemoryInfo VCpuInfo
-    | reject VCpuInfo.ValidCores? VCpuInfo.ValidThreadsPerCore?
-    | sort-by InstanceType
+  let sshCfg = (
+    scj dump /dev/stdout -c .ssh_config
+      | from json
+      | default "" Host
+      | default "" HostName
   )
-  mkdir flakeModules/aws/
-  {InstanceTypes: $spec} | save --force flakeModules/aws/ec2-spec.json
 
-show-nameservers:
-  #!/usr/bin/env nu
-  let domain = (nix eval --raw '.#cluster.infra.aws.domain')
-  let zones = (aws route53 list-hosted-zones-by-name | from json).HostedZones
-  let id = ($zones | where Name == $"($domain).").Id.0
-  let sets = (aws route53 list-resource-record-sets --hosted-zone-id $id | from json).ResourceRecordSets
-  let ns = ($sets | where Type == "NS").ResourceRecords.0.Value
-  print "Nameservers for the following hosted zone need to be added to the NS record of the delegating authority"
-  print $"Nameservers for domain: ($domain) \(hosted zone id: ($id)) are:"
-  print ($ns | to text)
+  if ($type == "id") {
+    $sshCfg
+      | where not ($it.Host =~ ".ipv(4|6)$")
+      | where Host =~ "{{PATTERN}}"
+      | get HostName
+      | str join " "
+  } else if ($type == "ipv4") {
+    $sshCfg
+      | where ($it.Host =~ ".ipv4$")
+      | where Host =~ "{{PATTERN}}"
+      | get HostName
+      | str join " "
+  # } else if ($type == "ipv6") {
+  #   $sshCfg
+  #     | where ($it.Host =~ ".ipv6$")
+  #     | where Host =~ "{{PATTERN}}"
+  #     | get HostName
+  #     | str join " "
+  } else if ($type == "name") {
+    $sshCfg
+      | where not ($it.Host =~ ".ipv(4|6)$")
+      | where Host =~ "{{PATTERN}}"
+      | get Host
+      | str join " "
+  } else if ($type == "region") {
+    $sshCfg
+      | where ($it.Host =~ ".ipv4$")
+      | where Host =~ "{{PATTERN}}"
+      | get Tag
+      | str join " "
+  } else if ($type == "type") {
+    $sshCfg
+      | where not ($it.Host =~ ".ipv(4|6)$")
+      | where Host =~ "{{PATTERN}}"
+      | get Tag
+      | str join " "
+  } else {
+    # print "The TYPE must be one of: id, ipv4, ipv6, name, region or type"
+    print "The TYPE must be one of: id, ipv4, name, region or type"
+  }
 
+# Run tofu cmds
+tofu *ARGS:
+  tofu {{ARGS}}
+
+# Save the cluster bootstrap ssh key
 save-bootstrap-ssh-key:
   #!/usr/bin/env nu
   print "Retrieving ssh key from tofu..."
@@ -144,6 +259,19 @@ save-bootstrap-ssh-key:
   $key.values.private_key_openssh | save .ssh_key
   chmod 0600 .ssh_key
 
+# Show DNS nameservers
+show-nameservers:
+  #!/usr/bin/env nu
+  let domain = (nix eval --raw '.#cluster.infra.aws.domain')
+  let zones = (aws route53 list-hosted-zones-by-name | from json).HostedZones
+  let id = ($zones | where Name == $"($domain).").Id.0
+  let sets = (aws route53 list-resource-record-sets --hosted-zone-id $id | from json).ResourceRecordSets
+  let ns = ($sets | where Type == "NS").ResourceRecords.0.Value
+  print "Nameservers for the following hosted zone need to be added to the NS record of the delegating authority"
+  print $"Nameservers for domain: ($domain) \(hosted zone id: ($id)) are:"
+  print ($ns | to text)
+
+# Save ssh config
 save-ssh-config:
   #!/usr/bin/env nu
   print "Retrieving ssh config from tofu..."
@@ -155,53 +283,3 @@ save-ssh-config:
   $key.values.content | save --force $env.SSH_CONFIG_FILE
   chmod 0600 $env.SSH_CONFIG_FILE
   print $"Saved to ($env.SSH_CONFIG_FILE)"
-
-kms:
-  #!/usr/bin/env nu
-  ( aws kms list-aliases
-  | from json
-  | get Aliases
-  | where AliasName == "alias/kmsKey"
-  | get AliasArn.0 )
-
-# URL example: https://playground.monitoring.aws.iohkdev.io/mimir
-mimir-bootstrap URL:
-  if not ('fallback.yml' | path exists) { print "Please create a fallback.yml file"; exit }
-  mimirtool alertmanager load --log.level=debug --address {{URL}} --id anonymous fallback.yml
-
-book:
-  tofu fmt docs/grafana.tf
-  mdbook build docs/
-
-ls:
-  @just list-machines
-
-# List machines in the cluster
-list-machines:
-  #!/usr/bin/env nu
-  let nix = (
-    nix eval '.#nixosConfigurations'
-      --json
-      --apply 'n: (map (n: {name=n; in_nixos_conf = true;}) (builtins.attrNames n))'
-      | from json
-      | dfr into-df
-  )
-
-  let list = (
-    tofu show -json
-    | from json
-    | get values.root_module.resources
-    | where type == "aws_instance"
-    | each {|n|
-        {
-          name: $n.name,
-          public_ip: $n.values.public_ip,
-          private_ip: $n.values.private_ip
-        }
-      }
-    | dfr into-df
-    | dfr join --outer $nix name name
-    | dfr sort-by name
-  )
-
-  $list | dfr into-nu

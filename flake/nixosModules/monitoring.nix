@@ -41,12 +41,36 @@
     # Allow HTTP (for obtaining the ACME certificate) and HTTPS.
     networking.firewall.allowedTCPPorts = [80 443];
 
-    # There is no existing NixOS option to set secrets for Caddy easily, so we
-    # just inject them into the environment.
-    # Within the Caddy configuration we can then reference them like:
-    # {$ADMIN_HASH}
-    systemd.services.caddy.serviceConfig.EnvironmentFile =
-      config.sops.secrets.caddy-environment.path;
+    systemd.services = {
+      # There is no existing NixOS option to set secrets for Caddy easily, so we
+      # just inject them into the environment.
+      # Within the Caddy configuration we can then reference them like:
+      # {$ADMIN_HASH}
+      caddy.serviceConfig.EnvironmentFile = config.sops.secrets.caddy-environment.path;
+
+      # Avoid grafana failing on reboot due to a secrets utilization race
+      # condition.
+      grafana.preStart = ''
+        while ! [ -f ${config.sops.secrets.grafana-password.path} ]; do
+          echo "Waiting for grafana secrets to become available..."
+          sleep 5
+        done
+      '';
+
+      # Avoid mimir failing on reboot due to a network interface not yet being
+      # available when it tries to bind.
+      mimir = {
+        # Using WantedBy and After for networking.target don't help, so we'll
+        # adjust the retry parameters to avoid failure.
+        startLimitIntervalSec = 10;
+        startLimitBurst = 10;
+
+        serviceConfig = {
+          Restart = "always";
+          RestartSec = "10s";
+        };
+      };
+    };
 
     # Finally all the services that need to be started.
     services = {

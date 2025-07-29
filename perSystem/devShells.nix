@@ -34,9 +34,11 @@
           # Mostly for the handy `sponge` command
           moreutils
           # Used for most scripts in the Justfile
-          nushellFull
+          nushell
           # Used for talking with CloudFormation
           rain
+          # Used for ssh sessions via aws scm
+          ssm-session-manager-plugin
           # Encryption
           sops
           # Used by `just lint`
