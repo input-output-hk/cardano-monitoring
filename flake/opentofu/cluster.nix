@@ -232,11 +232,12 @@ with lib; let
               from_port = 443;
               to_port = 443;
             }
-            {
-              description = "Allow SSH";
-              from_port = 22;
-              to_port = 22;
-            }
+            # No longer required now that SSH over AWS SCM is in use
+            # {
+            #   description = "Allow SSH";
+            #   from_port = 22;
+            #   to_port = 22;
+            # }
           ];
 
           egress = map mkSecurityGroupRule [
