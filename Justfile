@@ -245,14 +245,26 @@ ssh-list TYPE PATTERN:
 
 # Run tofu cmds
 tofu *ARGS:
-  #!/usr/bin/env nu
-  print $"Running tofu in the (ansi green){{WORKSPACE}}(ansi reset) workspace..."
+  #!/usr/bin/env bash
+  set -euo pipefail
+  IGREEN='\033[1;92m'
+  IRED='\033[1;91m'
+  NC='\033[0m'
+  SOPS=("sops" "--kms" "/dev/null" "--decrypt")
+
+  read -r -a ARGS <<< "{{ARGS}}"
+
+  unset VAR_FILE
+  if [ -s "secrets/{{WORKSPACE}}.tfvars.enc" ]; then
+    VAR_FILE="secrets/{{WORKSPACE}}.tfvars.enc"
+  fi
+
+  echo -e "Running tofu in the ${IGREEN}{{WORKSPACE}}${NC} workspace..."
   rm --force tofu.tf.json
   nix build ".#opentofu.{{WORKSPACE}}" --out-link tofu.tf.json
-
   tofu init -reconfigure
   tofu workspace select -or-create {{WORKSPACE}}
-  tofu {{ARGS}}
+  tofu "${ARGS[@]:0:1}" ${VAR_FILE:+-var-file=<("${SOPS[@]}" "$VAR_FILE")} "${ARGS[@]:1}"
 
 # Save the cluster bootstrap ssh key
 save-bootstrap-ssh-key:
