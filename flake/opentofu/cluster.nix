@@ -49,6 +49,27 @@ with lib; let
 
   mapBuckets = fn: listToAttrs (map fn buckets);
 
+  sensitiveString = {
+    type = "string";
+    sensitive = true;
+    nullable = false;
+  };
+
+  defaultTags = {
+    inherit
+      (self.cluster.infra.generic)
+      environment
+      function
+      organization
+      owner
+      project
+      repo
+      tribe
+      ;
+
+    # costCenter is saved as a secret
+    costCenter = "\${var.${self.cluster.infra.generic.costCenter}}";
+  };
   allConfig = {
     terraform = {
       required_providers = {
@@ -66,10 +87,19 @@ with lib; let
       };
     };
 
+    variable = {
+      # costCenter tag should remain secret in public repos
+      "${self.cluster.infra.generic.costCenter}" = sensitiveString;
+    };
+
     provider.aws = forEach (attrNames aws.regions) (region: {
       inherit region;
       alias = underscore region;
-      default_tags.tags = self.cluster.infra.generic;
+
+      # Default tagging is inconsistent across aws resources, but including
+      # it may help tag some resources that might have otherwise been
+      # missed.
+      default_tags.tags = defaultTags;
     });
 
     resource = {
@@ -77,7 +107,7 @@ with lib; let
         inherit (node.aws) region;
       in
         {
-          inherit (node.aws.instance) count instance_type tags root_block_device;
+          inherit (node.aws.instance) count instance_type;
 
           provider = awsProviderFor node.aws.region;
           ami = "\${data.aws_ami.nixos_${underscore monitorSystem}_${underscore region}.id}";
@@ -86,6 +116,18 @@ with lib; let
           monitoring = true;
           key_name = "\${aws_key_pair.bootstrap_${underscore node.aws.region}[0].key_name}";
           vpc_security_group_ids = ["\${aws_security_group.common_${underscore node.aws.region}[0].id}"];
+
+          # Provider level `default_tags` are automatically inherited at
+          # the instance level.  Instance specific tags defined in
+          # flake/colmena.nix are merged.
+          tags = node.aws.instance.tags or {};
+
+          root_block_device =
+            node.aws.instance.root_block_device
+            // {
+              # Default tags are not inherited to the volume level automatically.
+              tags = defaultTags // node.aws.instance.tags or {};
+            };
 
           metadata_options = {
             http_endpoint = "enabled";
@@ -100,6 +142,7 @@ with lib; let
       aws_iam_instance_profile.ec2_profile = {
         name = "ec2Profile";
         role = "\${aws_iam_role.ec2_role.name}";
+        tags = defaultTags;
       };
 
       aws_iam_role.ec2_role = {
@@ -114,6 +157,7 @@ with lib; let
             }
           ];
         };
+        tags = defaultTags;
       };
 
       aws_s3_bucket_policy = mapBuckets (bucket: {
@@ -170,6 +214,7 @@ with lib; let
             }
           ];
         };
+        tags = defaultTags;
       };
 
       aws_route53_record = mapNodes (name: _: {
@@ -191,13 +236,17 @@ with lib; let
           provider = awsProviderFor region;
           key_name = "bootstrap";
           public_key = "\${tls_private_key.bootstrap.public_key_openssh}";
+          tags = defaultTags;
         };
       });
 
       aws_eip = mapNodes (name: node: {
-        inherit (node.aws.instance) count tags;
+        inherit (node.aws.instance) count;
         provider = awsProviderFor node.aws.region;
         instance = "\${aws_instance.${name}[0].id}";
+
+        # Provider level `default_tags` are automatically inherited.
+        tags = node.aws.instance.tags or {};
       });
 
       aws_eip_association = mapNodes (name: node: {
@@ -248,6 +297,8 @@ with lib; let
               protocol = "-1";
             }
           ];
+
+          tags = defaultTags;
         };
       });
 
@@ -306,9 +357,17 @@ with lib; let
         };
       });
 
-      aws_s3_bucket = mapBuckets (bucket: {
-        name = bucket;
-        value = {inherit bucket;};
+      # Ref: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html
+      aws_availability_zones = mapRegions ({region, ...}: {
+        ${region} = {
+          provider = "aws.${region}";
+          filter = [
+            {
+              name = "opt-in-status";
+              values = ["opt-in-not-required"];
+            }
+          ];
+        };
       });
 
       aws_iam_policy_document = mapBuckets (bucket: {
@@ -329,7 +388,78 @@ with lib; let
           };
         };
       });
+
+      aws_internet_gateway = mapRegions ({region, ...}: {
+        ${region} = {
+          provider = "aws.${region}";
+          filter = [
+            {
+              name = "attachment.vpc-id";
+              values = ["\${data.aws_vpc.${region}.id}"];
+            }
+          ];
+          depends_on = ["data.aws_vpc.${region}"];
+        };
+      });
+
+      aws_route_table = mapRegions ({region, ...}: {
+        ${region} = {
+          provider = "aws.${region}";
+          route_table_id = "\${data.aws_vpc.${region}.main_route_table_id}";
+          depends_on = ["data.aws_vpc.${region}"];
+        };
+      });
+
+      aws_s3_bucket = mapBuckets (bucket: {
+        name = bucket;
+        value = {inherit bucket;};
+      });
+
+      aws_subnet = mapRegions ({region, ...}: {
+        ${region} = {
+          provider = "aws.${region}";
+          # The index of the map is used to assign an ipv6 subnet network
+          # id offset in the aws_default_subnet ipv6_cidr_block resource
+          # arg.
+          #
+          # While az ids are consistent across aws orgs, they are not
+          # implemented in all regions, therefore we'll use az names as
+          # indexed values.
+          #
+          # Ref:
+          #   https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/subnet#availability_zone_id
+          #
+          for_each = "\${{for i, az in data.aws_availability_zones.${region}.names : i => az}}";
+          availability_zone = "\${element(data.aws_availability_zones.${region}.names, each.key)}";
+          default_for_az = true;
+        };
+      });
+
+      aws_vpc = mapRegions ({region, ...}: {
+        ${region} = {
+          provider = "aws.${region}";
+          default = true;
+        };
+      });
     };
+
+    # Debug output
+    # output =
+    #   mapRegions ({region, ...}: {
+    #     "aws_availability_zones_${region}".value = "\${data.aws_availability_zones.${region}.names}";
+    #   })
+    #   // mapRegions ({region, ...}: {
+    #     "aws_internet_gateway_${region}".value = "\${data.aws_internet_gateway.${region}}";
+    #   })
+    #   // mapRegions ({region, ...}: {
+    #     "aws_route_table_${region}".value = "\${data.aws_route_table.${region}}";
+    #   })
+    #   // mapRegions ({region, ...}: {
+    #     "aws_subnet_${region}".value = "\${data.aws_subnet.${region}}";
+    #   })
+    #   // mapRegions ({region, ...}: {
+    #     "aws_vpc_${region}".value = "\${data.aws_vpc.${region}}";
+    #   });
   };
 in {
   flake.opentofu.cluster = inputs.terranix.lib.terranixConfiguration {

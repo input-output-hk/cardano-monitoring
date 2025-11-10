@@ -8,13 +8,34 @@
   flake.cloudFormation.state = let
     inherit (self.cluster.infra.aws) domain buckets;
 
-    tagWith = name: (lib.mapAttrsToList (Key: Value: {
-        inherit Key Value;
-      }) {
-        inherit (self.cluster.infra.generic) organization tribe function repo;
-        environment = "generic";
-        Name = name;
-      });
+    tagWith = name:
+      (lib.mapAttrsToList (n: v: {
+          Key = n;
+          Value = v;
+        }) {
+          inherit
+            (self.cluster.infra.generic)
+            environment
+            function
+            organization
+            owner
+            project
+            repo
+            tribe
+            ;
+        })
+      ++ [
+        {
+          Key = "Name";
+          Value = name;
+        }
+        {
+          Key = "costCenter";
+          Value = {
+            Ref = "costCenter";
+          };
+        }
+      ];
 
     mkBucket = name: {
       Type = "AWS::S3::Bucket";
@@ -44,6 +65,15 @@
   in {
     AWSTemplateFormatVersion = "2010-09-09";
     Description = "State handling";
+
+    # The costCenter parameter will be passed to the configuration via a secrets file.
+    # For details, see the just recipe: cf
+    Parameters = {
+      costCenter = {
+        Type = "String";
+        Description = "The costCenter tag";
+      };
+    };
 
     Resources =
       (lib.mapAttrs (_: mkBucket) buckets)

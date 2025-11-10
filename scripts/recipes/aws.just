@@ -89,8 +89,18 @@ aws-sso-login AWS_PROFILE=null *ARGS:
 # Deploy a cloudFormation stack
 cf STACKNAME:
   #!/usr/bin/env nu
-  nix eval --json '.#cloudFormation.{{STACKNAME}}' | from json | save --force '{{STACKNAME}}.json'
-  rain deploy --debug --termination-protection --yes {{STACKNAME}}.json
+  mkdir cloudFormation
+  let secretName = (nix eval --raw '.#cluster.infra.generic.costCenter')
+  let costCenter = (
+    sops --kms /dev/null -d secrets/cluster.tfvars.enc
+    | lines
+    | where { |it| $it =~ $secretName }
+    | parse $"($secretName) = \"{secret}\""
+    | get 0.secret
+    | to text
+  )
+  nix eval --json '.#cloudFormation.{{STACKNAME}}' | from json | save --force 'cloudFormation/{{STACKNAME}}.json'
+  rain deploy --debug --params costCenter=($costCenter) --termination-protection ./cloudFormation/{{STACKNAME}}.json
 
 # Show the full kms key ARN
 kms:

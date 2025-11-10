@@ -44,10 +44,7 @@
             delete_on_termination = true;
           };
 
-          # Setting tags on all our resources to adhere to:
-          # https://github.com/input-output-hk/sre-adrs/blob/master/decisions/0001-organize-infrastructure-via-tags.md
           tags = {
-            inherit (self.cluster.infra.generic) organization tribe function repo;
             environment = name;
             group = name;
             Name = name;
