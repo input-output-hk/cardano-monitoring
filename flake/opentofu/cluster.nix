@@ -217,9 +217,9 @@ with lib; let
         tags = defaultTags;
       };
 
-      aws_route53_record = mapNodes (name: _: {
+      aws_route53_record = mapNodes (name: node: {
         zone_id = "\${data.aws_route53_zone.selected.zone_id}";
-        name = "${name}.\${data.aws_route53_zone.selected.name}";
+        name = "${node.monitoring.subdomain}.\${data.aws_route53_zone.selected.name}";
         type = "A";
         ttl = "300";
         records = ["\${aws_eip.${name}[0].public_ip}"];
