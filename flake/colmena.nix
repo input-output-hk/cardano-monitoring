@@ -74,6 +74,11 @@
       midnight = {
         services.loki.enable = true;
       };
+
+      # Provides a place to store and view metrics for https://github.com/input-output-hk/usdcx-infra
+      usdcx = {
+        services.loki.enable = true;
+      };
     };
   };
 }

@@ -61,6 +61,12 @@
 
         # Storing Loki logs for the midnight cluster.
         midnightLoki = "${profile}-midnight-loki";
+
+        # Storing Mimir metrics for the usdcx cluster.
+        usdcx = "${profile}-usdcx";
+
+        # Storing Loki logs for the usdcx cluster.
+        usdcxLoki = "${profile}-usdcx-loki";
       };
     };
 
