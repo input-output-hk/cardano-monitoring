@@ -51,17 +51,20 @@
       playground = {
         aws.instance.root_block_device.volume_size = 100;
         services.mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";
+        services.loki.enable = true;
       };
 
       # Provides a place to store and view metrics for https://github.com/input-output-hk/cardano-mainnet
       mainnet = {
         aws.instance.root_block_device.volume_size = 100;
         services.mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";
+        services.loki.enable = true;
       };
 
       # Provides a place to store and view metrics for https://github.com/input-output-hk/ouroboros-network-ops
       networkteam = {
         aws.instance.root_block_device.volume_size = 100;
+        services.loki.enable = true;
       };
 
       # Provides a place to store and view metrics for https://github.com/input-output-hk/devx-ci
