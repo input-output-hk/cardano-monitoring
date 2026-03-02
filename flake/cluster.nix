@@ -44,11 +44,20 @@
         # Storing Mimir metrics for the playground cluster.
         playground = "${profile}-playground";
 
+        # Storing Loki logs for the playground cluster.
+        playgroundLoki = "${profile}-playground-loki";
+
         # Storing Mimir metrics for the mainnet cluster.
         mainnet = "${profile}-mainnet";
 
+        # Storing Loki logs for the mainnet cluster.
+        mainnetLoki = "${profile}-mainnet-loki";
+
         # Storing Mimir metrics for the networkteam cluster.
         networkteam = "${profile}-networkteam";
+
+        # Storing Loki logs for the networkteam cluster.
+        networkteamLoki = "${profile}-networkteam-loki";
 
         # Storing Mimir metrics for the devx-ci cluster.
         devxci = "${profile}-devxci";

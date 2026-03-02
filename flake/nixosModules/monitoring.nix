@@ -231,6 +231,9 @@ parts: {
             # Allow ingestion of out-of-order samples up to 5 minutes since the latest received sample for the series.
             limits.out_of_order_time_window = "5m";
 
+            # Help prevent "too many outstanding requests" errors.
+            frontend.max_outstanding_per_tenant = 256; # Default is 100
+
             server = {
               http_listen_port = 8080;
               http_listen_address = "127.0.0.1";
