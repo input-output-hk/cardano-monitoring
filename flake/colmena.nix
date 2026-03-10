@@ -50,37 +50,62 @@
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/cardano-playground
       playground = {
         aws.instance.root_block_device.volume_size = 100;
-        services.mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";
-        services.loki.enable = true;
+        services = {
+          mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";
+          loki = {
+            enable = true;
+            configuration.limits_config.retention_period = lib.mkForce "4320h"; # 6 months
+          };
+        };
       };
 
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/cardano-mainnet
       mainnet = {
         aws.instance.root_block_device.volume_size = 100;
-        services.mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";
-        services.loki.enable = true;
+        services = {
+          mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";
+          loki = {
+            enable = true;
+            configuration.limits_config.retention_period = lib.mkForce "4320h"; # 6 months
+          };
+        };
       };
 
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/ouroboros-network-ops
       networkteam = {
         aws.instance.root_block_device.volume_size = 100;
-        services.loki.enable = true;
+        services = {
+          loki = {
+            enable = true;
+            configuration.limits_config.retention_period = lib.mkForce "4320h"; # 6 months
+          };
+        };
       };
 
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/devx-ci
       devxci = {
         aws.instance.root_block_device.volume_size = 100;
-        services.loki.enable = true;
+        services = {
+          loki = {
+            enable = true;
+            configuration.limits_config.retention_period = lib.mkForce "720h"; # 30 days
+          };
+        };
       };
 
-      # Provides a place to store and view metrics for https://github.com/midnightntwrk/gd-infrastructure
+      # Provides a place to store and view metrics and logs for https://github.com/midnightntwrk/gd-infrastructure
       midnight = {
         services.loki.enable = true;
       };
 
-      # Provides a place to store and view metrics for https://github.com/input-output-hk/usdcx-infra
+      # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/usdcx-infra
       usdcx = {
-        services.loki.enable = true;
+        services = {
+          loki = {
+            enable = true;
+            configuration.limits_config.retention_period = lib.mkForce "720h"; # 30 days
+          };
+        };
       };
     };
   };
