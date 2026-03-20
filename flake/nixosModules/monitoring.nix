@@ -179,7 +179,7 @@ parts: {
                   name = "Loki";
                   uid = "loki";
                   url = "http://127.0.0.1:${toString config.services.loki.configuration.server.http_listen_port}";
-                  jsonData.manageAlerts = false;
+                  jsonData.manageAlerts = true;
                 };
             };
           };
@@ -291,6 +291,12 @@ parts: {
                 reverse_proxy 127.0.0.1:${toString config.services.loki.configuration.server.http_listen_port}
               }
 
+              handle /loki/* {
+                basicauth { admin {$ADMIN_HASH} }
+                uri strip_prefix /loki
+                reverse_proxy 127.0.0.1:${toString config.services.loki.configuration.server.http_listen_port}
+              }
+
               handle /otlp/v1/logs {
                 basicauth { write {$WRITE_HASH} }
                 reverse_proxy 127.0.0.1:${toString config.services.loki.configuration.server.http_listen_port}
@@ -381,6 +387,19 @@ parts: {
               };
             }
           ];
+
+          ruler = {
+            alertmanager_url = "http://127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}/mimir/alertmanager";
+            storage = {
+              type = "s3";
+              s3 = {
+                s3 = "s3://${parts.config.flake.cluster.infra.aws.region}";
+                bucketnames = buckets."${name}Loki" or (throw "Missing S3 bucket for ${name}Loki");
+              };
+            };
+            rule_path = "/var/lib/loki/rules";
+            ring.kvstore.store = "inmemory";
+          };
         };
       };
     };
