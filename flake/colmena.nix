@@ -47,14 +47,13 @@
       # Every attribute apart from `meta` and `defaults` defines a machine deployment.
       # These are empty right now because the default imports suffice.
 
-      # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/cardano-playground
-      playground = {
+      # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/devx-ci
+      devxci = {
         aws.instance.root_block_device.volume_size = 100;
         services = {
-          mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";
           loki = {
             enable = true;
-            configuration.limits_config.retention_period = lib.mkForce "4320h"; # 6 months
+            configuration.limits_config.retention_period = lib.mkForce "720h"; # 30 days
           };
         };
       };
@@ -71,6 +70,11 @@
         };
       };
 
+      # Provides a place to store and view metrics and logs for https://github.com/midnightntwrk/gd-infrastructure
+      midnight = {
+        services.loki.enable = true;
+      };
+
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/ouroboros-network-ops
       networkteam = {
         aws.instance.root_block_device.volume_size = 100;
@@ -82,20 +86,45 @@
         };
       };
 
-      # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/devx-ci
-      devxci = {
+      # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/cardano-playground
+      playground = {
         aws.instance.root_block_device.volume_size = 100;
+
         services = {
+          mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";
           loki = {
             enable = true;
-            configuration.limits_config.retention_period = lib.mkForce "720h"; # 30 days
+            configuration.limits_config.retention_period = lib.mkForce "4320h"; # 6 months
           };
         };
       };
 
-      # Provides a place to store and view metrics and logs for https://github.com/midnightntwrk/gd-infrastructure
-      midnight = {
-        services.loki.enable = true;
+      # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/cardano-sandbox
+      sandbox = nixos: {
+        aws.instance.root_block_device.volume_size = 100;
+
+        # JMESPath array of allowed iohk.io email addresses, e.g.:
+        # ['user1@iohk.io', 'user2@iohk.io']
+        sops.secrets.grafana-extra-allowed-users = {
+          sopsFile = self + "/secrets/grafana-extra-allowed-users-sandbox.enc";
+          owner = "grafana";
+          restartUnits = ["grafana.service"];
+        };
+
+        services = {
+          grafana.settings."auth.google" = {
+            # role_attribute_strict denies access when no valid role is returned.
+            role_attribute_path = "contains($__file{${nixos.config.sops.secrets.grafana-extra-allowed-users.path}}, email) && 'Editor' || ''";
+            role_attribute_strict = true;
+          };
+
+          mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";
+
+          loki = {
+            enable = true;
+            configuration.limits_config.retention_period = lib.mkForce "4320h"; # 6 months
+          };
+        };
       };
 
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/usdcx-infra

@@ -41,11 +41,11 @@
         # Storing OpenTofu state.
         state = profile;
 
-        # Storing Mimir metrics for the playground cluster.
-        playground = "${profile}-playground";
+        # Storing Mimir metrics for the devx-ci cluster.
+        devxci = "${profile}-devxci";
 
-        # Storing Loki logs for the playground cluster.
-        playgroundLoki = "${profile}-playground-loki";
+        # Storing Loki logs for the devx-ci cluster.
+        devxciLoki = "${profile}-devxci-loki";
 
         # Storing Mimir metrics for the mainnet cluster.
         mainnet = "${profile}-mainnet";
@@ -53,23 +53,29 @@
         # Storing Loki logs for the mainnet cluster.
         mainnetLoki = "${profile}-mainnet-loki";
 
+        # Storing Mimir metrics for the midnight cluster.
+        midnight = "${profile}-midnight";
+
+        # Storing Loki logs for the midnight cluster.
+        midnightLoki = "${profile}-midnight-loki";
+
         # Storing Mimir metrics for the networkteam cluster.
         networkteam = "${profile}-networkteam";
 
         # Storing Loki logs for the networkteam cluster.
         networkteamLoki = "${profile}-networkteam-loki";
 
-        # Storing Mimir metrics for the devx-ci cluster.
-        devxci = "${profile}-devxci";
+        # Storing Mimir metrics for the playground cluster.
+        playground = "${profile}-playground";
 
-        # Storing Loki logs for the devx-ci cluster.
-        devxciLoki = "${profile}-devxci-loki";
+        # Storing Loki logs for the playground cluster.
+        playgroundLoki = "${profile}-playground-loki";
 
-        # Storing Mimir metrics for the midnight cluster.
-        midnight = "${profile}-midnight";
+        # Storing Mimir metrics for the sandbox cluster.
+        sandbox = "${profile}-sandbox";
 
-        # Storing Loki logs for the midnight cluster.
-        midnightLoki = "${profile}-midnight-loki";
+        # Storing Loki logs for the sandbox cluster.
+        sandboxLoki = "${profile}-sandbox-loki";
 
         # Storing Mimir metrics for the usdcx cluster.
         usdcx = "${profile}-usdcx";
@@ -81,13 +87,13 @@
 
     # Mostly generic key/values used for tagging resources.
     generic = {
-      organization = "ioe";
+      organization = "cbu";
       tribe = "coretech";
       function = "cardano-monitoring";
       repo = "https://github.com/input-output-hk/cardano-monitoring";
 
       # Tags below are required by IT/Finance
-      owner = "ioe";
+      owner = "cbu";
       environment = "monitoring";
       project = "cardano-monitoring";
 
