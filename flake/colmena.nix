@@ -100,7 +100,7 @@
       };
 
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/cardano-sandbox
-      sandbox = nixos: {
+      sandbox = {config, ...}: {
         aws.instance.root_block_device.volume_size = 100;
 
         # JMESPath array of allowed iohk.io email addresses, e.g.:
@@ -114,7 +114,7 @@
         services = {
           grafana.settings."auth.google" = {
             # role_attribute_strict denies access when no valid role is returned.
-            role_attribute_path = "contains($__file{${nixos.config.sops.secrets.grafana-extra-allowed-users.path}}, email) && 'Editor' || ''";
+            role_attribute_path = "contains($__file{${config.sops.secrets.grafana-extra-allowed-users.path}}, email) && 'Editor' || ''";
             role_attribute_strict = true;
           };
 
