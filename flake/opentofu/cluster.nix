@@ -132,7 +132,7 @@ with lib; let
           metadata_options = {
             http_endpoint = "enabled";
             http_put_response_hop_limit = 2;
-            http_tokens = "optional";
+            http_tokens = "required";
           };
         }
         // optionalAttrs (node.aws.instance ? availability_zone) {
