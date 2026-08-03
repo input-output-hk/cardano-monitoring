@@ -95,6 +95,13 @@
           loki = {
             enable = true;
             configuration.limits_config.retention_period = lib.mkForce "4320h"; # 6 months
+
+            # The leios call-trace log stream legitimately carries ~15-16 index
+            # labels (kind/ns/event/name/thread on top of the base journald +
+            # service labels). Loki's default max_label_names_per_series (15)
+            # rejects it with HTTP 400, silently dropping call-trace logs. Raise
+            # to 20 for headroom (matches ouroboros-leios demo/extras/x-ray/loki.yaml).
+            configuration.limits_config.max_label_names_per_series = lib.mkForce 20;
           };
         };
       };
