@@ -347,7 +347,7 @@ with lib; let
           filter = [
             {
               name = "name";
-              values = ["nixos/25.05*"];
+              values = ["nixos/26.05*"];
             }
             {
               name = "architecture";

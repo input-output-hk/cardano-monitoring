@@ -88,7 +88,12 @@
 
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/cardano-playground
       playground = {
-        aws.instance.root_block_device.volume_size = 100;
+        aws.instance = {
+          # Raised from the t4g.xlarge default: playground carries heavy RAM
+          # intensive loki load
+          instance_type = "r9g.2xlarge";
+          root_block_device.volume_size = 100;
+        };
 
         services = {
           mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";
@@ -96,12 +101,13 @@
             enable = true;
             configuration.limits_config.retention_period = lib.mkForce "4320h"; # 6 months
 
-            # The leios call-trace log stream legitimately carries ~15-16 index
-            # labels (kind/ns/event/name/thread on top of the base journald +
-            # service labels). Loki's default max_label_names_per_series (15)
-            # rejects it with HTTP 400, silently dropping call-trace logs. Raise
-            # to 20 for headroom (matches ouroboros-leios demo/extras/x-ray/loki.yaml).
+            # Loki leios tuning for higher than typical load
             configuration.limits_config.max_label_names_per_series = lib.mkForce 20;
+            configuration.limits_config.max_global_streams_per_user = lib.mkForce 25000;
+            configuration.limits_config = {
+              ingestion_rate_mb = lib.mkForce 16;
+              ingestion_burst_size_mb = lib.mkForce 32;
+            };
           };
         };
       };
