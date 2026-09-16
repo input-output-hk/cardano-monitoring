@@ -107,6 +107,21 @@
             configuration.limits_config = {
               ingestion_rate_mb = lib.mkForce 16;
               ingestion_burst_size_mb = lib.mkForce 32;
+
+              # Raised from the loki default of 500 as leiosCommitteeSize is 900,
+              # and the EB panels return a series per rbHash
+              max_query_series = 2000;
+
+              # Leios ingestion is orders of magnitude above the other
+              # playground environments, so its streams retain less than the
+              # 6 month default
+              retention_stream = [
+                {
+                  selector = ''{environment="leios"}'';
+                  priority = 1;
+                  period = "720h"; # 30 days
+                }
+              ];
             };
           };
         };
