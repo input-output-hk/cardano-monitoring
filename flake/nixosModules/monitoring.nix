@@ -399,6 +399,14 @@ parts: {
             };
             rule_path = "/var/lib/loki/rules";
             ring.kvstore.store = "inmemory";
+
+            # Recording rules land in mimir beside its own, so a log-derived
+            # number costs one rule file instead of a log scan per dashboard draw.
+            remote_write = {
+              enabled = true;
+              clients.mimir.url = "http://127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}/mimir/api/v1/push";
+            };
+            wal.dir = "/var/lib/loki/ruler-wal";
           };
         };
       };
