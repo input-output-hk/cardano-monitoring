@@ -4,6 +4,7 @@
   ...
 }: {
   flake.nixosModules.aws = {
+    config,
     lib,
     name,
     ...
@@ -103,6 +104,13 @@
       };
 
       region = lib.mkDefault self.cluster.infra.aws.region;
+    };
+
+    # Colmena reaches the machines through SSM, enabled by amazon-image.nix.
+    # Stopping the agent at the start of a switch cuts the session
+    # mid-activation, so restart it later in the switch instead.
+    config.systemd.services.amazon-ssm-agent = lib.mkIf config.services.amazon-ssm-agent.enable {
+      stopIfChanged = lib.mkDefault false;
     };
   };
 }
