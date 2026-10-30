@@ -54,7 +54,7 @@
 
     environment = {
       etc."alloy/config.alloy".source = let
-        blackboxPath = (inputs."cardano-${name}") + "/flake/terraform/grafana/blackbox/blackbox.nix-import";
+        blackboxPath = inputs."cardano-${name}" + "/flake/terraform/grafana/blackbox/blackbox.nix-import";
 
         blackboxTarget =
           if (hasAttr "cardano-${name}" inputs && pathExists blackboxPath)
@@ -259,7 +259,7 @@
           }
         '';
       in
-        (pkgs.runCommandNoCCLocal "alloy.config" {} ''
+        (pkgs.runCommandLocal "alloy.config" {} ''
           ${getExe config.services.alloy.package} fmt ${alloyCfg'} > $out
         '')
         .out;
@@ -282,7 +282,7 @@
         gitMinimal
         # More of a comprehensive dashboard than htop, but requires more resources
         # and provides no control
-        glances
+        btop
         helix
         # Easily see what's going on with a machine.
         htop
@@ -470,7 +470,7 @@
     system = {
       # Ensure the nixpgs repo is persisted on the machine itself for easier
       # debugging.
-      extraSystemBuilderCmds = ''
+      systemBuilderCommands = ''
         ln -sv ${pkgs.path} $out/nixpkgs
       '';
 

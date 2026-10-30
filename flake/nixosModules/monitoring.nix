@@ -107,6 +107,10 @@ parts: {
             # The password used for bootstrapping.
             security.admin_password = "$__file{${config.sops.secrets.grafana-password.path}}";
 
+            # NixOS 26.05 removed this default. Preserve the key used by existing
+            # databases; changing it requires a separate encryption-key migration.
+            security.secret_key = "SW2YcwTIb9zpOOhoPsMm";
+
             # Provides a nicer view of all the alerts including the ones from AlertManager.
             unified_alerting.enabled = true;
 
@@ -232,7 +236,7 @@ parts: {
             limits.out_of_order_time_window = "5m";
 
             # Help prevent "too many outstanding requests" errors.
-            frontend.max_outstanding_per_tenant = 256; # Default is 100
+            query_scheduler.max_outstanding_requests_per_tenant = 256; # Default is 100
 
             server = {
               http_listen_port = 8080;
@@ -271,34 +275,34 @@ parts: {
               encode zstd gzip
 
               handle /blackbox/* {
-                basicauth { admin {$ADMIN_HASH} }
+                basic_auth { admin {$ADMIN_HASH} }
                 reverse_proxy 127.0.0.1:9115
               }
 
               handle /mimir/api/v1/push {
-                basicauth { write {$WRITE_HASH} }
+                basic_auth { write {$WRITE_HASH} }
                 reverse_proxy 127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}
               }
 
               handle /mimir/* {
-                basicauth { admin {$ADMIN_HASH} }
+                basic_auth { admin {$ADMIN_HASH} }
                 reverse_proxy 127.0.0.1:${toString config.services.mimir.configuration.server.http_listen_port}
               }
             ''
             + lib.optionalString config.services.loki.enable ''
               handle /loki/api/v1/push {
-                basicauth { write {$WRITE_HASH} }
+                basic_auth { write {$WRITE_HASH} }
                 reverse_proxy 127.0.0.1:${toString config.services.loki.configuration.server.http_listen_port}
               }
 
               handle /loki/* {
-                basicauth { admin {$ADMIN_HASH} }
+                basic_auth { admin {$ADMIN_HASH} }
                 uri strip_prefix /loki
                 reverse_proxy 127.0.0.1:${toString config.services.loki.configuration.server.http_listen_port}
               }
 
               handle /otlp/v1/logs {
-                basicauth { write {$WRITE_HASH} }
+                basic_auth { write {$WRITE_HASH} }
                 reverse_proxy 127.0.0.1:${toString config.services.loki.configuration.server.http_listen_port}
               }
             ''

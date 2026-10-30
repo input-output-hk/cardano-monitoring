@@ -99,12 +99,12 @@
           mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";
           loki = {
             enable = true;
-            configuration.limits_config.retention_period = lib.mkForce "4320h"; # 6 months
-
-            # Loki leios tuning for higher than typical load
-            configuration.limits_config.max_label_names_per_series = lib.mkForce 20;
-            configuration.limits_config.max_global_streams_per_user = lib.mkForce 25000;
             configuration.limits_config = {
+              retention_period = lib.mkForce "4320h"; # 6 months
+
+              # Loki leios tuning for higher than typical load
+              max_label_names_per_series = lib.mkForce 20;
+              max_global_streams_per_user = lib.mkForce 25000;
               ingestion_rate_mb = lib.mkForce 16;
               ingestion_burst_size_mb = lib.mkForce 32;
 

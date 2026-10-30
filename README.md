@@ -16,6 +16,33 @@ While working on the next step, you can already start the devshell using:
 
 This will be done automatically if you are using [direnv](https://direnv.net/).
 
+### NixOS 26.05 upgrade
+
+The flake pins NixOS 26.05 and a refreshed OpenTofu provider registry. Keep
+`system.stateVersion = "23.05"`: it records the original installation's data
+compatibility defaults and is not the OS release selector.
+
+The upgrade includes Grafana 13, Mimir 3, Loki 3.7, and Alloy 1.16. Grafana's
+previous default encryption key is now explicitly preserved because NixOS 26.05
+no longer supplies it. Rotating that key requires a separate migration of
+existing encrypted database settings; do not simply replace it during rollout.
+See the [NixOS release notes](https://nixos.org/manual/nixos/stable/release-notes.html).
+Mimir keeps its existing single-binary, classic storage architecture; its queue
+limit now uses `query_scheduler.max_outstanding_requests_per_tenant` because
+the old frontend setting was removed in Mimir 3.
+
+Before rolling out, back up Grafana's database and other local service state,
+then deploy and check playground before the other monitoring servers. Check
+ingestion, dashboards, recording rules, and alert delivery after activation and
+after rebooting into the upgraded kernel/initrd.
+
+For OpenTofu, enter the updated development shell and run `tf init -upgrade`
+to refresh any existing local provider lockfile, then review `tf plan` before
+applying infrastructure changes. The AWS provider crosses a major version to
+6.x; offline schema validation does not establish that a live plan is unchanged.
+Provider binaries are selected for the development machine's architecture on
+both supported Linux platforms.
+
 ### General
 
 General information about this cluster is stored in the `flake/cluster.nix`
