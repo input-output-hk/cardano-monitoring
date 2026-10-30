@@ -134,7 +134,7 @@
         # JMESPath array of allowed iohk.io email addresses, e.g.:
         # ['user1@iohk.io', 'user2@iohk.io']
         sops.secrets.grafana-extra-allowed-users = {
-          sopsFile = self + "/secrets/grafana-extra-allowed-users-sandbox.enc";
+          sopsFile = ../secrets/grafana-extra-allowed-users-sandbox.enc;
           owner = "grafana";
           restartUnits = ["grafana.service"];
         };

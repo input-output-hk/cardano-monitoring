@@ -329,7 +329,7 @@
       # This token is required for auth-keys-hub. It requires at least org:read
       # permissions to check team membership.
       secrets.github-token = {
-        sopsFile = "${self}/secrets/github-token.enc";
+        sopsFile = ../../secrets/github-token.enc;
         owner = config.programs.auth-keys-hub.user;
         inherit (config.programs.auth-keys-hub) group;
       };
