@@ -16,12 +16,6 @@
       # the correct list of nameservers to set your NS entry to.
       domain = "monitoring.aws.iohkdev.io";
 
-      # This value is available after the CloudFormation configuration has been
-      # applied with `just cf state` by running `just kms`.
-      # This is also stored in the KMS environment variable.
-      # It's mostly used for encryption with SOPS.
-      kms = "arn:aws:kms:eu-central-1:463886338519:alias/kmsKey";
-
       # The default region for new instances. This is also stored in the
       # AWS_REGION environment variable, so CloudFormation will make use of it.
       region = "eu-central-1";

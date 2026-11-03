@@ -132,15 +132,29 @@ Because it has to use the bootstrap SSH key that the AMI was provisioned with.
 Secrets are encrypted using [SOPS](https://github.com/getsops/sops)
 and [KMS](https://aws.amazon.com/kms/).
 
-All secrets live in `./secrets/`
+All secrets live in `./secrets/`, and `.sops.yaml` points sops at the
+cluster's KMS key, so you can create or edit a secret using:
 
-You should be able to edit secrets using:
-
-    sops --kms "$KMS" ./secrets/github-token.enc
+    sops ./secrets/github-token.enc
 
 Or simply decrypt a secret with
 
     sops -d ./secrets/github-token.enc 
+
+Only SOPS-encrypted files belong in `./secrets/`, so never write a decrypted
+secret to a file in the repository: edit with `sops` as above, and send
+`sops -d` output to the terminal or a pipe. Three safeguards back this up:
+
+- Files in `./secrets/` that don't end in `.enc` are ignored by git, so a
+  stray decrypted copy isn't picked up by `git add -A`.
+- The devshell installs a pre-commit hook that refuses to commit any file
+  under `./secrets/` that isn't SOPS-encrypted. It checks what is staged, so
+  after encrypting a file you've already staged, `git add` it again.
+- Hydra runs the same check (`checks.secrets-encrypted`) in its required
+  build, so a pull request containing a plaintext secret can't be merged.
+
+This repository is public: a plaintext secret that reaches GitHub, even on a
+branch, has leaked and must be rotated.
 
 #### Caddy
 
