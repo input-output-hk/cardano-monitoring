@@ -50,6 +50,10 @@
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/devx-ci
       devxci = {
         aws.instance.root_block_device.volume_size = 100;
+        monitoring.externalUsers = {
+          enable = true;
+          allowAdmins = true;
+        };
         services = {
           loki = {
             enable = true;
@@ -61,6 +65,10 @@
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/cardano-mainnet
       mainnet = {
         aws.instance.root_block_device.volume_size = 100;
+        monitoring.externalUsers = {
+          enable = true;
+          allowAdmins = true;
+        };
         services = {
           mimir.configuration.limits.compactor_blocks_retention_period = lib.mkForce "10y";
           loki = {
@@ -72,12 +80,20 @@
 
       # Provides a place to store and view metrics and logs for https://github.com/midnightntwrk/gd-infrastructure
       midnight = {
+        monitoring.externalUsers = {
+          enable = true;
+          allowAdmins = true;
+        };
         services.loki.enable = true;
       };
 
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/ouroboros-network-ops
       networkteam = {
         aws.instance.root_block_device.volume_size = 100;
+        monitoring.externalUsers = {
+          enable = true;
+          allowAdmins = true;
+        };
         services = {
           loki = {
             enable = true;
@@ -93,6 +109,11 @@
           # intensive loki load
           instance_type = "r9g.2xlarge";
           root_block_device.volume_size = 100;
+        };
+
+        monitoring.externalUsers = {
+          enable = true;
+          allowAdmins = true;
         };
 
         services = {
@@ -131,6 +152,11 @@
       sandbox = {config, ...}: {
         aws.instance.root_block_device.volume_size = 100;
 
+        monitoring.externalUsers = {
+          enable = true;
+          allowAdmins = true;
+        };
+
         # JMESPath array of allowed iohk.io email addresses, e.g.:
         # ['user1@iohk.io', 'user2@iohk.io']
         sops.secrets.grafana-extra-allowed-users = {
@@ -157,6 +183,10 @@
 
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/usdcx-infra
       usdcx = {
+        monitoring.externalUsers = {
+          enable = true;
+          allowAdmins = true;
+        };
         services = {
           loki = {
             enable = true;

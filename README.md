@@ -187,3 +187,59 @@ Finally go to `Administration` -> `Users and access` -> `Users` and set
 permissions on your organisation to `Admin` as well.
 Once you refresh, you can start creating a service account as per the
 instructions in `grafana.tfvars`
+
+#### External users
+
+Machines with `monitoring.externalUsers.enable = true` show a second
+"Sign in with Google (others)" button for people outside iohk.io, and label
+the iohk.io one "Sign in with Google (Input Output users)". Signing in with
+Google is not enough: the others button only lets in the addresses on these
+allow-lists, with the matching role. Each machine has its own editors and
+viewers lists, e.g. for mainnet:
+
+    sops ./secrets/grafana-external-editors-mainnet.enc
+    sops ./secrets/grafana-external-viewers-mainnet.enc
+
+and the admins list is shared by every machine that sets
+`monitoring.externalUsers.allowAdmins = true`:
+
+    sops ./secrets/grafana-external-admins.enc
+
+Each holds a JSON array of email addresses, e.g. `["alice@example.com"]`,
+or `[]` for none. Addresses must match the Google account's primary address
+exactly, including case. Any Google account with that verified address
+works, including a personal one: someone without a Google account can create
+one with their work address (Create account, For my personal use, Use your
+existing email). Such accounts keep working after the person leaves their
+company, so remove leavers from the lists.
+
+In the editors and viewers lists, `"*@example.com"` (domain in lowercase)
+matches every address at example.com, but only for accounts managed by that
+domain's Google organisation, so that organisation's admins decide who it
+covers.
+Roles are re-applied from the lists at every login, and anyone on none of
+them is refused after the Google sign-in ("IdP did not return a role
+attribute, please contact your administrator"), before Grafana creates a
+user.
+Removing someone stops new logins only; to end an existing session, also
+delete the user in Grafana.
+
+Keep the admins list to the SRE team: an address on it is an org Admin on
+every machine that allows admins, mainnet included. Admins can invite
+password users and create API tokens, which the lists don't control, so when
+removing an admin, also check for those. People with iohk.io accounts sign
+in with the Input Output button instead, which doesn't use these lists.
+
+To enable the button on another machine, copy an existing machine's editors
+and viewers files to the new machine's name (SOPS files are self-contained,
+so `cp` works), `git add` them, and edit them with `sops`.
+
+This button uses its own OAuth client, which belongs to an external
+organisation and is set to External, so that any Google account can use it,
+unless its Workspace admins block third-party apps; the lists above then
+decide who gets into Grafana. Its owners register the `/login/generic_oauth`
+redirect URL of each such machine on it and send us its ID and secret, which
+go in:
+
+    sops ./secrets/grafana-external-oauth-client-id.enc
+    sops ./secrets/grafana-external-oauth-client-secret.enc

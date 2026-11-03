@@ -29,6 +29,54 @@ parts: {
       '';
     };
 
+    options.monitoring.externalUsers = {
+      enable = lib.mkEnableOption ''
+        a second Google sign-in button for people outside iohk.io, provided
+        they are on this machine's editorsFile or viewersFile list, or on
+        adminsFile with allowAdmins. Signing in with Google alone gets
+        nobody in'';
+
+      editorsFile = lib.mkOption {
+        type = lib.types.path;
+        default = ../../secrets + "/grafana-external-editors-${name}.enc";
+        description = ''
+          This machine's SOPS file containing a JSON array of the external
+          email addresses that get the Editor role, e.g. ["alice@example.com"].
+          "*@example.com" matches every address at example.com, provided the
+          account belongs to that domain's Google organisation.
+          Use [] for none.
+        '';
+      };
+
+      viewersFile = lib.mkOption {
+        type = lib.types.path;
+        default = ../../secrets + "/grafana-external-viewers-${name}.enc";
+        description = ''
+          This machine's SOPS file containing a JSON array of the external
+          email addresses that get the Viewer role, e.g. ["bob@example.com"].
+          "*@example.com" works as for editorsFile.
+          Use [] for none.
+        '';
+      };
+
+      allowAdmins = lib.mkEnableOption ''
+        the org Admin role for the addresses in adminsFile.
+        Off by default, so that nobody from outside gets Admin'';
+
+      adminsFile = lib.mkOption {
+        type = lib.types.path;
+        default = ../../secrets/grafana-external-admins.enc;
+        description = ''
+          SOPS file containing a JSON array of the external email addresses
+          that get the org Admin role on machines that set allowAdmins, e.g.
+          ["carol@example.com"]. Shared by those machines and meant for the
+          SRE team. Exact addresses only: "*@" entries are ignored here.
+          Admins can invite password users and create API tokens, neither of
+          which the lists control.
+        '';
+      };
+    };
+
     config = let
       cfg = config.monitoring;
     in {
@@ -42,6 +90,14 @@ parts: {
         # Note that we use the same OAuth credentials for all Grafana instances.
         grafana-oauth-client-id = ownerGrafana ../../secrets/grafana-oauth-client-id.enc;
         grafana-oauth-client-secret = ownerGrafana ../../secrets/grafana-oauth-client-secret.enc;
+
+        # The external Google sign-in, see monitoring.externalUsers: who may use
+        # it, and its OAuth client, which belongs to the external organisation.
+        grafana-external-editors = lib.mkIf cfg.externalUsers.enable (ownerGrafana cfg.externalUsers.editorsFile);
+        grafana-external-viewers = lib.mkIf cfg.externalUsers.enable (ownerGrafana cfg.externalUsers.viewersFile);
+        grafana-external-admins = lib.mkIf (cfg.externalUsers.enable && cfg.externalUsers.allowAdmins) (ownerGrafana cfg.externalUsers.adminsFile);
+        grafana-external-oauth-client-id = lib.mkIf cfg.externalUsers.enable (ownerGrafana ../../secrets/grafana-external-oauth-client-id.enc);
+        grafana-external-oauth-client-secret = lib.mkIf cfg.externalUsers.enable (ownerGrafana ../../secrets/grafana-external-oauth-client-secret.enc);
 
         # For each machine, we have separate Basic Auth credentials.
         # These are used for provisioning via OpenTofu from other repositories.
@@ -142,7 +198,75 @@ parts: {
               allowed_domains = "iohk.io";
               hosted_domain = "iohk.io";
               use_pkce = true;
+
+              # Tell the two Google buttons apart on the login page.
+              name = lib.mkIf cfg.externalUsers.enable "Google (Input Output users)";
             };
+
+            # A second Google sign-in for people outside iohk.io, provided
+            # they are on the allow-lists set by monitoring.externalUsers:
+            # the lists, not the Google sign-in, are what grant access. The
+            # client above is Internal to iohk.io, so this one uses a separate
+            # External OAuth client, owned by an external organisation, that
+            # any Google account can use, unless its Workspace admins block
+            # third-party apps. The lists work through Grafana's role sync,
+            # which sets a user's role from them at every sign-in. Role sync
+            # is off for the iohk.io login above, where roles are managed by
+            # hand in Grafana, and turning it on there would overwrite them.
+            # So external users get this separate provider, and role sync
+            # only applies to them.
+            "auth.generic_oauth" = lib.mkIf cfg.externalUsers.enable (let
+              # The secrets hold JSON arrays. Backticks make them JMESPath
+              # literals, so that an empty [] works too. to_array keeps the
+              # match exact if a malformed list is ever read as one string.
+              emails = secret: "to_array(`$__file{${config.sops.secrets.${secret}.path}}`)";
+              listed = secret: "contains(${emails secret}, email)";
+
+              # Also matches a "*@<domain>" entry for the address's domain, but
+              # only for accounts managed by a Google organisation (hd), which
+              # has to own the domain of every address it issues. hd itself
+              # may name another of its domains, so it isn't compared. Personal
+              # accounts don't count here: they keep working after the person
+              # leaves, and nobody would know to remove them. split and lower
+              # come from Grafana's JMESPath library (jmespath-community).
+              listedOrDomain = secret: "(${listed secret} || hd && contains(${emails secret}, join('', ['*@', lower(split(email, '@')[-1])])))";
+
+              # Highest role first, so that someone on several lists gets the
+              # highest of them.
+              roles =
+                lib.optional cfg.externalUsers.allowAdmins "${listed "grafana-external-admins"} && 'Admin'"
+                ++ [
+                  "${listedOrDomain "grafana-external-editors"} && 'Editor'"
+                  "${listedOrDomain "grafana-external-viewers"} && 'Viewer'"
+                ];
+            in {
+              enabled = true;
+              name = "Google (others)";
+              icon = "google";
+              allow_sign_up = true;
+              auto_login = false;
+              client_id = "$__file{${config.sops.secrets.grafana-external-oauth-client-id.path}}";
+              client_secret = "$__file{${config.sops.secrets.grafana-external-oauth-client-secret.path}}";
+              scopes = "openid email profile";
+              auth_url = "https://accounts.google.com/o/oauth2/v2/auth";
+              token_url = "https://oauth2.googleapis.com/token";
+              api_url = "https://openidconnect.googleapis.com/v1/userinfo";
+              use_pkce = true;
+
+              # Unlike auth.google, this provider doesn't check email_verified,
+              # so we do it here. Exact addresses accept any Google account,
+              # including a personal one created with a work address, so that
+              # people whose company doesn't use Google can be listed too.
+              role_attribute_path = "email_verified && (${lib.concatStringsSep " || " roles}) || ''";
+
+              # This is what enforces the lists: anyone on none of them is
+              # refused after the Google sign-in, before a Grafana user is
+              # created. It only takes effect with role sync on: the default
+              # for generic_oauth, but not for auth.google, so we set it
+              # explicitly.
+              role_attribute_strict = true;
+              skip_org_role_sync = false;
+            });
           };
 
           provision = {
