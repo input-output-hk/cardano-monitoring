@@ -90,9 +90,12 @@
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/ouroboros-network-ops
       networkteam = {
         aws.instance.root_block_device.volume_size = 100;
-        monitoring.externalUsers = {
-          enable = true;
-          allowAdmins = true;
+        monitoring = {
+          grafanaSecretKeyRotated = true;
+          externalUsers = {
+            enable = true;
+            allowAdmins = true;
+          };
         };
         services = {
           loki = {
@@ -152,9 +155,12 @@
       sandbox = {config, ...}: {
         aws.instance.root_block_device.volume_size = 100;
 
-        monitoring.externalUsers = {
-          enable = true;
-          allowAdmins = true;
+        monitoring = {
+          grafanaSecretKeyRotated = true;
+          externalUsers = {
+            enable = true;
+            allowAdmins = true;
+          };
         };
 
         # JMESPath array of allowed iohk.io email addresses, e.g.:
@@ -183,9 +189,12 @@
 
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/usdcx-infra
       usdcx = {
-        monitoring.externalUsers = {
-          enable = true;
-          allowAdmins = true;
+        monitoring = {
+          grafanaSecretKeyRotated = true;
+          externalUsers = {
+            enable = true;
+            allowAdmins = true;
+          };
         };
         services = {
           loki = {

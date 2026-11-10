@@ -77,14 +77,29 @@ parts: {
       };
     };
 
+    options.monitoring.grafanaSecretKeyRotated = lib.mkEnableOption ''
+      Grafana's own secret_key, from this machine's
+      secrets/grafana-secret-key-«name».enc, instead of Grafana's public
+      default. The key encrypts the secrets Grafana keeps in its database,
+      so a new machine can set this from its first deploy, but any other
+      only once grafana-rekey has re-encrypted its database (see
+      docs/grafana-secret-key.md). Otherwise those secrets become
+      unreadable'';
+
     config = let
       cfg = config.monitoring;
+      secretKey = "$__file{${config.sops.secrets.grafana-secret-key.path}}";
     in {
       # SOPS is used for encrypting our secrets
       sops.secrets = {
         # The initial password for the administrator. This is used to bootstrap our
         # google oauth logins and give them the correct permissions.
         grafana-password = ownerGrafana ../../secrets/grafana-password.enc;
+
+        # Grafana's secret_key, which encrypts the secrets Grafana keeps in its
+        # database. Installed even before monitoring.grafanaSecretKeyRotated is
+        # set, so that grafana-rekey can re-encrypt the database for it.
+        grafana-secret-key = ownerGrafana (../../secrets + "/grafana-secret-key-${name}.enc");
 
         # Obtained from https://console.cloud.google.com/apis/credentials
         # Note that we use the same OAuth credentials for all Grafana instances.
@@ -110,6 +125,12 @@ parts: {
 
       # Allow HTTP (for obtaining the ACME certificate) and HTTPS.
       networking.firewall.allowedTCPPorts = [80 443];
+
+      # Re-encrypts Grafana's database for a new secret_key, see
+      # monitoring.grafanaSecretKeyRotated.
+      environment.systemPackages = [
+        parts.config.flake.packages.${pkgs.stdenv.hostPlatform.system}.grafana-rekey
+      ];
 
       systemd.services = {
         # There is no existing NixOS option to set secrets for Caddy easily, so we
@@ -163,9 +184,19 @@ parts: {
             # The password used for bootstrapping.
             security.admin_password = "$__file{${config.sops.secrets.grafana-password.path}}";
 
-            # NixOS 26.05 removed this default. Preserve the key used by existing
-            # databases; changing it requires a separate encryption-key migration.
-            security.secret_key = "SW2YcwTIb9zpOOhoPsMm";
+            # Encrypts the secrets Grafana keeps in its database. Until
+            # monitoring.grafanaSecretKeyRotated is set, this is Grafana's
+            # public default, which NixOS 26.05 no longer sets for us.
+            security.secret_key =
+              if cfg.grafanaSecretKeyRotated
+              then secretKey
+              else "SW2YcwTIb9zpOOhoPsMm";
+
+            # Grafana 13's secrets manager has its own copy of the key, which
+            # defaults to the same public value.
+            "secrets_manager.encryption.secret_key.v1" = lib.mkIf cfg.grafanaSecretKeyRotated {
+              secret_key = secretKey;
+            };
 
             # Provides a nicer view of all the alerts including the ones from AlertManager.
             unified_alerting.enabled = true;

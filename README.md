@@ -26,6 +26,7 @@ The upgrade includes Grafana 13, Mimir 3, Loki 3.7, and Alloy 1.16. Grafana's
 previous default encryption key is now explicitly preserved because NixOS 26.05
 no longer supplies it. Rotating that key requires a separate migration of
 existing encrypted database settings; do not simply replace it during rollout.
+The [switch-over steps](docs/grafana-secret-key.md) describe that migration.
 See the [NixOS release notes](https://nixos.org/manual/nixos/stable/release-notes.html).
 Mimir keeps its existing single-binary, classic storage architecture; its queue
 limit now uses `query_scheduler.max_outstanding_requests_per_tenant` because
@@ -187,6 +188,27 @@ Finally go to `Administration` -> `Users and access` -> `Users` and set
 permissions on your organisation to `Admin` as well.
 Once you refresh, you can start creating a service account as per the
 instructions in `grafana.tfvars`
+
+#### Grafana secret key
+
+Grafana encrypts the secrets it keeps in its database (contact point keys,
+data source passwords, users' OAuth tokens) under its `secret_key`. Each
+machine has its own key in `secrets/grafana-secret-key-<machine>.enc`, but
+only uses it once `monitoring.grafanaSecretKeyRotated = true` is set for it
+in `flake/colmena.nix`. Until then it keeps Grafana's public default key.
+
+To create a key, run `sops ./secrets/grafana-secret-key-<machine>.enc` and
+replace the example text with the output of `openssl rand -hex 32` (in vim:
+`:r !openssl rand -hex 32`).
+
+A new machine's database starts empty, so it can set
+`monitoring.grafanaSecretKeyRotated` from its first deploy. A machine that
+has already run with the public default key has to be switched over with
+the steps in [docs/grafana-secret-key.md](docs/grafana-secret-key.md),
+which re-encrypt its database first.
+
+Don't edit the key file of a machine that uses its key: deploying the change
+restarts Grafana under a key its database isn't encrypted for.
 
 #### External users
 
