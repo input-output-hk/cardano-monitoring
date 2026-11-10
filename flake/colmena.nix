@@ -80,9 +80,12 @@
 
       # Provides a place to store and view metrics and logs for https://github.com/midnightntwrk/gd-infrastructure
       midnight = {
-        monitoring.externalUsers = {
-          enable = true;
-          allowAdmins = true;
+        monitoring = {
+          grafanaSecretKeyRotated = true;
+          externalUsers = {
+            enable = true;
+            allowAdmins = true;
+          };
         };
         services.loki.enable = true;
       };
