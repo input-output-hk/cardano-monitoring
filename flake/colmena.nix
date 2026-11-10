@@ -50,9 +50,12 @@
       # Provides a place to store and view metrics and logs for https://github.com/input-output-hk/devx-ci
       devxci = {
         aws.instance.root_block_device.volume_size = 100;
-        monitoring.externalUsers = {
-          enable = true;
-          allowAdmins = true;
+        monitoring = {
+          grafanaSecretKeyRotated = true;
+          externalUsers = {
+            enable = true;
+            allowAdmins = true;
+          };
         };
         services = {
           loki = {
