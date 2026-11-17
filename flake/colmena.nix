@@ -123,9 +123,12 @@
           root_block_device.volume_size = 100;
         };
 
-        monitoring.externalUsers = {
-          enable = true;
-          allowAdmins = true;
+        monitoring = {
+          grafanaSecretKeyRotated = true;
+          externalUsers = {
+            enable = true;
+            allowAdmins = true;
+          };
         };
 
         services = {
