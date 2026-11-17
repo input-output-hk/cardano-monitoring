@@ -1,12 +1,98 @@
-# Grafana secret key switch-over
+# Grafana secret key migration and audit
 
 These steps move a machine's Grafana off the public default `secret_key`
 and onto the machine's own key (see "Grafana secret key" in the
 [README](../README.md#grafana-secret-key)). Grafana can't move its
 database to another key, so `grafana-rekey`, which is installed on every
 machine, re-encrypts it for the new key first. Each machine needs this
-once. When every machine has `monitoring.grafanaSecretKeyRotated` set,
-this page can go, along with the option.
+once. Machines already switched over can use the audit below.
+
+## Audit an already migrated machine
+
+After deploying the version containing `grafana-rekey audit`, run on each
+machine as root:
+
+```sh
+sudo -u grafana grafana-rekey audit \
+  --db /var/lib/grafana/data/grafana.db \
+  --current /run/secrets/grafana-secret-key \
+  --previous-default
+```
+
+Grafana can keep running. The audit opens SQLite read-only and takes a
+consistent snapshot, including committed WAL contents. It does not update
+secrets, rewrap keys, or make a backup. If the previous key was custom,
+replace `--previous-default` with `--previous /path/to/old-key-file`.
+
+The audit checks both data-key stores and the secret columns handled by
+Grafana 13's secrets migrator, including nested JSON and the secrets
+manager's encrypted values. Unlike `check`, it looks for legacy secrets
+without an algorithm prefix as well as directly encrypted prefixed values.
+It prints affected table/row/field locations and totals, without printing
+secret values or keys:
+
+| Status | Meaning |
+| --- | --- |
+| `old-key` | A data key or secret still requires the previous key. |
+| `direct-current-key` | A secret uses the current key directly and still needs migration onto a data key. |
+| `unresolved` | The audit cannot validate the record: possible causes include a missing data key, malformed data, an unsupported provider, a wrong key, or insufficient evidence for AES-CFB. |
+| `ok` | A data key or envelope secret validates with the current key. Only the total is printed. |
+| `empty` | An empty secret field needs no decryption. Only the total is printed. |
+| `encrypted-empty` | A zero-byte CFB payload references a data key confirmed under the current key by other secrets. The empty payload itself cannot validate a key or establish whether the field was always empty. |
+| `unreferenced-key` | A CFB data key has no references in the audited columns and its wrapping key remains unverified. These keys are summarized together rather than printed individually. |
+
+The summary separates unresolved data keys from unresolved secret fields
+and counts keys with and without references in the audited columns. An
+unreferenced CFB key cannot be confirmed; this alone does not show corruption
+or that the key is unused everywhere. Malformed JSON can also hide references.
+Do not delete keys based on that count.
+
+Unresolved secret lines identify the referenced data-key row (or `direct`)
+and the outcome under each candidate wrapping key. `cfb-empty` means the
+encrypted payload decrypts to zero bytes with any key; `cfb-short-text`
+means printable text shorter than 16 bytes; `cfb-non-text` means the result
+fails the text heuristic. `decryption-failed` includes malformed ciphertext
+and GCM authentication failures. Only outcome labels and byte lengths are
+printed, never decrypted values. A field failing validation under a data
+key confirmed by other secrets needs separate investigation from a field
+whose data key cannot yet be confirmed. An encrypted-empty field is listed
+separately only when its referenced key has been confirmed under the current
+key. Direct empty ciphertext and fields referencing an unconfirmed key
+remain unresolved.
+
+When secret values validate with the current key and the only remaining
+limitations are unreferenced keys or encrypted-empty fields, the audit says:
+
+> Results are consistent with a successful migration: all nonempty audited secret payloads validate with the current key; no old-key use was identified.
+
+It also reports the remaining verification limitations. This statement is
+withheld if any `old-key`, `direct-current-key`, or `unresolved` records
+remain. Without any validated secret values, the summary instead says that
+migration status is inconclusive. A clean audit with validated values also
+prints the success statement.
+
+Exit status is **0** when no findings remain in the supported columns,
+**1** when any `old-key`, `direct-current-key`, `unresolved`,
+`unreferenced-key`, or `encrypted-empty` records remain, and **2** when the
+audit cannot complete or its arguments are invalid. The new labels preserve
+the previous conservative exit behavior: a result consistent with successful
+migration still exits 1 if verification limitations remain.
+
+AES-GCM authenticates its plaintext. AES-CFB does not: its validation uses
+printable UTF-8, with at least 16 bytes needed to confirm a key. Short direct
+CFB secrets, and CFB data keys without a sufficiently long referenced secret,
+remain unresolved even when they may be healthy. A short envelope secret
+can validate after another secret confirms its data key. These checks
+cannot prove that a previously overwritten secret still has its original
+value, and cannot recover lost plaintext. Keep backups until findings have
+been investigated.
+
+An audit finding is not an instruction to rerun the old migration commands.
+In particular, running Grafana's migrator with the previous configuration
+against a database already using the new key can overwrite secrets with
+garbage. Use the reported locations to plan a targeted repair or restore.
+
+## Switch a machine over
 
 To switch a machine over, follow the steps below. From stopping Grafana in
 step 5 until step 7, nothing else may start it: a deploy of the machine
@@ -117,15 +203,20 @@ machine in between.
        sudo -u grafana grafana-rekey check --db /var/lib/grafana/data/grafana.db \
          --from-default
 
+       # Inspect known secret columns for migration leftovers as well.
+       sudo -u grafana grafana-rekey audit --db /var/lib/grafana/data/grafana.db \
+         --current /run/secrets/grafana-secret-key --previous-default
+
        # Grafana shouldn't log decryption errors.
        run=$(systemctl show -P InvocationID grafana)
        journalctl -o cat _SYSTEMD_INVOCATION_ID="$run" |
          grep -i -E 'level=(error|warn).*(decrypt|cipher|secret|data.?key)'
 
    The first `check` should report about as many secrets as step 3 did.
-   The two `check`s are the proof: Grafana reads the same key file, and a
-   wrong key gives it garbage rather than errors, so the journal is only a
-   sign. If the config still shows `SW2YcwTIb9zpOOhoPsMm`, Grafana is using
+   The `check`s test data-key references; the audit also checks for legacy
+   secrets they can miss. Interpret its results and AES-CFB limitations as
+   described above. A quiet journal alone does not prove decryption works.
+   If the config still shows `SW2YcwTIb9zpOOhoPsMm`, Grafana is using
    the old key on the re-keyed database: stop it at once, make sure the
    option is set, and apply again. In the UI, test the data sources that
    have a password or token, but not a PagerDuty contact point, which would

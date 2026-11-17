@@ -15,7 +15,7 @@
       (builtins.readFile ./grafana-rekey.py);
 
     # Checks its encryption against Grafana's own test vectors, and
-    # re-encrypts a scratch database.
+    # re-encrypts a scratch database, and audits migration leftovers and WAL.
     checks.grafana-rekey = pkgs.runCommand "grafana-rekey" {} ''
       ${lib.getExe config.packages.grafana-rekey} self-test
       touch $out

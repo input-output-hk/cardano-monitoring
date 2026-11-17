@@ -207,6 +207,11 @@ has already run with the public default key has to be switched over with
 the steps in [docs/grafana-secret-key.md](docs/grafana-secret-key.md),
 which re-encrypt its database first.
 
+After migration, use the read-only `grafana-rekey audit` subcommand to check
+for secrets still using the old key, including legacy values missed by
+`check`. See [the audit instructions](docs/grafana-secret-key.md#audit-an-already-migrated-machine)
+for the command and how to interpret findings. Grafana can keep running.
+
 Don't edit the key file of a machine that uses its key: deploying the change
 restarts Grafana under a key its database isn't encrypted for.
 

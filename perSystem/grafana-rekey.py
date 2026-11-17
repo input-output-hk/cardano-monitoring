@@ -16,14 +16,20 @@ AES-CFB has no integrity check, so a data key decrypted with the wrong key
 comes out as random bytes, without an error. Before writing anything, the
 current key is therefore checked by decrypting every secret in the database
 that uses a data key: it is only accepted if they all come out as text.
-The check command does only that, so it also confirms afterwards that the
-database decrypts with the new key.
+The check command does only that; it does not inspect every legacy secret
+column. Use audit after migration to check those as well.
+
+The read-only audit command inspects Grafana 13's secret columns with both
+the current and previous keys, including legacy ciphertext without a prefix.
+It reports remaining old-key secrets and inconclusive checks separately.
 """
 
 import argparse
 import base64
 import binascii
+import contextlib
 import datetime
+import io
 import json
 import os
 import secrets
@@ -31,7 +37,9 @@ import sqlite3
 import string
 import subprocess
 import sys
+import tempfile
 from collections import Counter
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from cryptography.exceptions import InvalidTag
@@ -340,6 +348,395 @@ def read_key(path):
     return Path(path).read_text(encoding="utf-8").strip().encode()
 
 
+# From Grafana 13's pkg/services/secrets/migrator/migrator.go. Restrict
+# unprefixed-ciphertext detection to secret columns: ordinary text and
+# arbitrary base64 elsewhere in the database are not encrypted secrets.
+AUDIT_COLUMNS = {
+    "dashboard_snapshot": {"dashboard_encrypted": "raw"},
+    "user_auth": dict.fromkeys((
+        "o_auth_access_token", "o_auth_refresh_token", "o_auth_token_type",
+        "o_auth_id_token",
+    ), "base64"),
+    "user_external_session": dict.fromkeys((
+        "access_token", "id_token", "refresh_token", "session_id", "name_id",
+    ), "base64"),
+    "secrets": {"value": "base64"},
+    "signing_key": {"private_key": "base64"},
+    "data_source": {"secure_json_data": "map"},
+    "plugin_setting": {"secure_json_data": "map"},
+    "alert_configuration": {"alertmanager_configuration": "alerting"},
+    "sso_setting": {"settings": "sso"},
+    "resource": {"value": "provisioning"},
+}
+SSO_SECRET_PATTERNS = ("secret", "private", "certificate", "password",
+                       "client_key")
+DECRYPT_ERRORS = (InvalidTag, RekeyError, ValueError, TypeError)
+
+
+@dataclass
+class AuditKey:
+    location: str
+    candidates: dict = field(default_factory=dict)
+    confirmed: set = field(default_factory=set)
+    references: int = 0
+    problem: str = ""
+
+
+def audit_rows(db, table, required=()):
+    # All the supported Grafana SQLite tables have rowids. These identify
+    # rows without printing ciphertext, credentials, or unrelated columns.
+    cursor = db.execute(f'SELECT rowid AS _audit_rowid, * FROM "{table}"')
+    columns = [column[0] for column in cursor.description]
+    if not set(required) <= set(columns):
+        raise RekeyError(f"unsupported audit schema for {table}")
+    for values in cursor:
+        row = dict(zip(columns, values))
+        yield f"{table}[rowid={row['_audit_rowid']}]", row
+
+
+def audit_matches(blob, candidates):
+    """Return key matches, safe diagnostics, and an empty-CFB indicator.
+
+    GCM authenticates even empty/binary plaintext. CFB has no tag; require
+    printable UTF-8 and at least 16 bytes to confirm a wrapping key. Short
+    values may be accepted later if another value confirms that data key.
+    """
+    matches = {}
+    details = []
+    empty_cfb = False
+    try:
+        algorithm, _ = split_algorithm(blob)
+        if algorithm not in ("aes-cfb", "aes-gcm"):
+            raise ValueError
+    except DECRYPT_ERRORS:
+        return matches, "unsupported or malformed ciphertext format", False
+    for label, key in candidates.items():
+        try:
+            plaintext = decrypt(blob, key)
+        except DECRYPT_ERRORS:
+            details.append(f"{label}=decryption-failed")
+            continue
+        if algorithm == "aes-gcm":
+            matches[label] = True
+            outcome = "gcm-authenticated"
+        elif not plaintext:
+            outcome = "cfb-empty"
+            empty_cfb = True
+        elif is_text(plaintext):
+            matches[label] = len(plaintext) >= 16
+            outcome = "cfb-long-text" if matches[label] else "cfb-short-text"
+        else:
+            outcome = "cfb-non-text"
+        details.append(f"{label}={outcome}(bytes={len(plaintext)})")
+    return matches, "; ".join(details) or "no candidate data keys", empty_cfb
+
+
+class SecretAudit:
+    def __init__(self, db, current, previous, report=print):
+        self.db = db
+        self.wrapping_keys = {"current": current, "previous": previous}
+        self.report = report
+        self.counts = Counter()
+        self.keys = {}
+        self.values = []
+        self.fields = set()
+
+    def result(self, location, status, reason=""):
+        self.counts[status] += 1
+        if status not in ("ok", "empty", "unreferenced-key"):
+            self.report(f"{status}: {location}: {reason}")
+
+    def load_keys(self):
+        for table, (column, providers) in STORES.items():
+            if not table_exists(self.db, table):
+                continue
+            required = (column, "provider", "encrypted_data")
+            for location, row in audit_rows(self.db, table, required):
+                location += ".encrypted_data"
+                namespace = row.get("namespace", "")
+                identity = (table, namespace, row[column])
+                entry = AuditKey(location)
+                self.keys[identity] = entry
+                provider = row["provider"]
+                if not isinstance(provider, str) or not provider.startswith(
+                    providers
+                ):
+                    entry.problem = "unsupported wrapping provider"
+                    continue  # Report as unresolved in finish().
+                for label, secret in self.wrapping_keys.items():
+                    try:
+                        stored = row["encrypted_data"]
+                        if isinstance(stored, str):
+                            stored = stored.encode()
+                        algorithm, _ = split_algorithm(stored)
+                        key = decrypt(stored, secret)
+                    except DECRYPT_ERRORS:
+                        continue
+                    # Both Grafana key generators use 16 random bytes.
+                    if len(key) == 16:
+                        entry.candidates[label] = key
+                        if algorithm == "aes-gcm":
+                            entry.confirmed.add(label)
+                if not entry.candidates:
+                    entry.problem = "neither key yields a 16-byte data key"
+
+    def value(self, location, value, encoding="base64", reference=None):
+        if value is None or value == "" or value == b"":
+            self.result(location, "empty")
+            return
+        try:
+            if not isinstance(value, (str, bytes)):
+                raise ValueError
+            blob = value.encode() if isinstance(value, str) else value
+            if encoding == "base64":
+                blob = b64decode_raw(blob)
+            if reference is None and blob[:1] == b"#":
+                envelope = split_envelope(blob)
+                if envelope is None:
+                    raise ValueError
+                name, blob = envelope
+                reference = ("data_keys", "", name)
+        except (ValueError, TypeError):
+            self.result(location, "unresolved", "invalid secret encoding")
+            return
+        entry = self.keys.get(reference) if reference is not None else None
+        if reference is not None and entry is None:
+            self.result(location, "unresolved", "referenced data key missing")
+            return
+        candidates = entry.candidates if entry else self.wrapping_keys
+        matches, details, empty_cfb = audit_matches(blob, candidates)
+        if entry:
+            entry.references += 1
+            entry.confirmed.update(
+                k for k, strong in matches.items() if strong
+            )
+        self.values.append((location, entry, matches, details, empty_cfb))
+
+    def json_fields(self, location, value, kind):
+        if value is None or value == "" or value == b"":
+            return
+        try:
+            obj = json.loads(value)
+            if not isinstance(obj, dict):
+                raise ValueError
+        except (ValueError, TypeError):
+            self.result(location, "unresolved", "invalid container JSON")
+            return
+        if kind == "map":
+            for key, secret in obj.items():
+                self.value(f"{location}[{json.dumps(key)}]", secret)
+            return
+
+        def walk(node, path):
+            if isinstance(node, list):
+                for index, item in enumerate(node):
+                    walk(item, f"{path}[{index}]")
+            elif isinstance(node, dict):
+                for key, item in node.items():
+                    child = f"{path}[{json.dumps(key)}]"
+                    if kind == "sso" and any(
+                        p in key.lower() for p in SSO_SECRET_PATTERNS
+                    ):
+                        self.value(child, item)
+                    elif kind == "alerting" and key in (
+                        "secureSettings", "secure_settings",
+                    ):
+                        if not isinstance(item, dict):
+                            self.result(child, "unresolved", "invalid map")
+                        else:
+                            for field_name, secret in item.items():
+                                self.value(
+                                    f"{child}[{json.dumps(field_name)}]",
+                                    secret,
+                                )
+                    else:
+                        walk(item, child)
+
+        if kind == "provisioning":
+            for parts in (("spec", "github", "encryptedToken"),
+                          ("status", "webhook", "encryptedSecret")):
+                node, path = obj, location
+                for part in parts:
+                    if not isinstance(node, dict) or part not in node:
+                        break
+                    node = node[part]
+                    path += f"[{json.dumps(part)}]"
+                else:
+                    self.value(path, node)
+        else:
+            walk(obj, location)
+
+    def scan_fields(self):
+        for table, columns in AUDIT_COLUMNS.items():
+            if not table_exists(self.db, table):
+                continue
+            for location, row in audit_rows(self.db, table):
+                if table == "resource" and (
+                    row.get("group") != "provisioning.grafana.app"
+                    or row.get("resource") != "repositories"
+                ):
+                    continue
+                for column, encoding in columns.items():
+                    if column not in row:
+                        continue  # Optional columns vary with Grafana version.
+                    self.fields.add(f"{table}.{column}")
+                    path = f"{location}.{column}"
+                    if encoding in ("raw", "base64"):
+                        self.value(path, row[column], encoding)
+                    else:
+                        self.json_fields(path, row[column], encoding)
+        table = "secret_encrypted_value"
+        if table_exists(self.db, table):
+            required = ("namespace", "data_key_id", "encrypted_data")
+            for location, row in audit_rows(self.db, table, required):
+                self.fields.add(f"{table}.encrypted_data")
+                reference = ("secret_data_key", row["namespace"],
+                             row["data_key_id"])
+                self.value(f"{location}.encrypted_data", row["encrypted_data"],
+                           "raw", reference)
+
+    def finish(self):
+        unresolved_keys = 0
+        for entry in self.keys.values():
+            if (not entry.references and not entry.confirmed
+                    and not entry.problem):
+                self.result(entry.location, "unreferenced-key")
+            elif len(entry.confirmed) != 1:
+                unresolved_keys += 1
+                if entry.problem:
+                    reason = entry.problem
+                elif len(entry.confirmed) > 1:
+                    reason = "both wrapping keys matched; ambiguous"
+                elif not entry.references:
+                    reason = ("no references found in audited columns; "
+                              "CFB wrapping key cannot be confirmed")
+                else:
+                    reason = "referenced secrets do not confirm a wrapping key"
+                self.result(entry.location, "unresolved",
+                            f"references={entry.references}; {reason}")
+            elif "previous" in entry.confirmed:
+                self.result(entry.location, "old-key",
+                            "data key still uses the previous wrapping key")
+            else:
+                self.result(entry.location, "ok")
+        validated_values = 0
+        for location, entry, matches, details, empty_cfb in self.values:
+            confirmed = entry.confirmed if entry else {
+                k for k, strong in matches.items() if strong
+            }
+            usable = set(matches) & confirmed
+            if empty_cfb and entry and confirmed == {"current"}:
+                self.result(location, "encrypted-empty",
+                            "zero-byte CFB payload; referenced data key "
+                            "confirmed under current key by other secrets; "
+                            f"key={entry.location}")
+            elif len(confirmed) != 1 or len(usable) != 1:
+                if empty_cfb:
+                    reason = "empty CFB payload cannot confirm a wrapping key"
+                elif len(confirmed) > 1:
+                    reason = "ambiguous wrapping key"
+                elif entry and not confirmed:
+                    reason = "referenced data key is unconfirmed"
+                elif entry:
+                    reason = "secret fails validation under confirmed data key"
+                else:
+                    reason = "direct secret cannot confirm one wrapping key"
+                reference = entry.location if entry else "direct"
+                self.result(location, "unresolved",
+                            f"{reason}; key={reference}; {details}")
+            elif "previous" in usable:
+                self.result(location, "old-key",
+                            "secret still requires the previous key")
+            elif entry is None:
+                self.result(location, "direct-current-key",
+                            "secret uses the current key directly, "
+                            "without a data key")
+            else:
+                self.result(location, "ok")
+                validated_values += 1
+        self.report(
+            f"audit: {len(self.keys)} data keys; "
+            f"{len(self.fields)} populated secret columns inspected"
+        )
+        referenced = sum(bool(k.references) for k in self.keys.values())
+        self.report(
+            "data-key references in audited columns: "
+            f"referenced={referenced}; "
+            f"unreferenced={len(self.keys) - referenced}"
+        )
+        self.report(
+            f"unresolved breakdown: data-keys={unresolved_keys}; "
+            f"secret-fields={self.counts['unresolved'] - unresolved_keys}"
+        )
+        self.report("; ".join(
+            f"{status}={self.counts[status]}" for status in (
+                "ok", "empty", "encrypted-empty", "unreferenced-key",
+                "old-key", "direct-current-key", "unresolved",
+            )
+        ))
+        if any(self.counts[s] for s in (
+            "old-key", "direct-current-key", "unresolved",
+        )):
+            self.report("Migration needs investigation: see findings above.")
+        elif validated_values:
+            self.report("Results are consistent with a successful migration: "
+                        "all nonempty audited secret payloads validate with "
+                        "the current key; no old-key use was identified.")
+        else:
+            self.report("Migration status is inconclusive: no secret values "
+                        "validated with the current key.")
+        if self.counts["unreferenced-key"]:
+            self.report(
+                f"{self.counts['unreferenced-key']} CFB data keys have no "
+                "references in audited columns; their wrapping keys remain "
+                "unverified. This alone does not indicate corruption."
+            )
+        if self.counts["encrypted-empty"]:
+            self.report("Empty CFB payloads cannot establish whether those "
+                        "fields were always empty.")
+        if self.counts["unreferenced-key"] or self.counts["encrypted-empty"]:
+            self.report("Verification limitations remain; "
+                        "audit exit status remains 1.")
+        self.report("CFB validation is heuristic, not cryptographic proof. "
+                    "Nothing written.")
+        return self.counts
+
+
+def audit_database(db, current, previous, report=print):
+    if not table_exists(db, "data_keys"):
+        raise RekeyError("audit requires a Grafana database with data_keys")
+    audit = SecretAudit(db, current, previous, report)
+    audit.load_keys()
+    audit.scan_fields()
+    return audit.finish()
+
+
+def run_audit(args):
+    current = read_key(args.current)
+    previous = (DEFAULT_KEY if args.previous_default
+                else read_key(args.previous))
+    if not current or not previous or current == previous:
+        raise RekeyError("audit requires two different, nonempty keys")
+    if os.geteuid() != os.stat(args.db).st_uid:
+        raise RekeyError(
+            "run the audit as the database owner (e.g. sudo -u grafana)"
+        )
+    uri = Path(args.db).absolute().as_uri() + "?mode=ro"
+    db = sqlite3.connect(uri, uri=True)
+    try:
+        db.execute("PRAGMA query_only = ON")
+        # One consistent view of keys and secrets, including committed WAL
+        # contents. Do not use immutable=1 on a live Grafana database.
+        db.execute("BEGIN")
+        counts = audit_database(db, current, previous)
+    finally:
+        db.close()
+    return int(any(counts[status] for status in (
+        "old-key", "direct-current-key", "unresolved",
+        "unreferenced-key", "encrypted-empty",
+    )))
+
+
 def grafana_state():
     """grafana.service's state, as systemctl reports it; never a guess."""
     try:
@@ -461,7 +858,7 @@ def scratch_db(secret):
     )
     db.execute(
         "INSERT INTO secret_data_key VALUES ('u1', 'secret_key.v1', ?)",
-        (encrypt(os.urandom(32), secret, "aes-gcm"),),
+        (encrypt(os.urandom(16), secret, "aes-gcm"),),
     )
 
     def sealed(plaintext):
@@ -547,7 +944,254 @@ def self_test():
     )
 
     expect_refusal(lambda: read_key(""), "an empty key file name")
+    audit_self_test()
     print("self-test passed")
+
+
+def audit_self_test():
+    current = b"a new wrapping key for audit tests"
+    plaintext = b"a sufficiently long synthetic secret"
+    messages = []
+
+    def inspect(db):
+        messages.clear()
+        before = list(db.iterdump())
+        counts = audit_database(db, current, DEFAULT_KEY, messages.append)
+        expect(list(db.iterdump()) == before, "audit does not change data")
+        output = "\n".join(messages)
+        for secret in (plaintext, current, DEFAULT_KEY):
+            expect(secret.decode() not in output, "no secrets in audit output")
+        if any(counts[s] for s in (
+            "old-key", "direct-current-key", "unresolved",
+        )):
+            expect("consistent with a successful migration" not in output,
+                   "no reassuring summary when findings need investigation")
+        return counts
+
+    def reported(fragment):
+        expect(any(fragment in message for message in messages),
+               f"audit diagnostic: {fragment}")
+
+    def direct(key, algorithm="aes-cfb", text=plaintext, legacy=False):
+        blob = encrypt(text, key, algorithm)
+        if legacy:
+            _, blob = split_algorithm(blob)
+        return base64.b64encode(blob).decode().rstrip("=")
+
+    db = scratch_db(DEFAULT_KEY)
+    expect(inspect(db)["old-key"] == 4, "old data keys and envelopes")
+    keys, _ = verify(db, DEFAULT_KEY)
+    rekey(db, keys, current)
+    expect(inspect(db) == Counter(ok=4), "healthy migrated database")
+    reported("consistent with a successful migration")
+
+    # The former verifier misses this unprefixed, directly encrypted token.
+    db.execute("INSERT INTO user_auth VALUES (2, ?)",
+               (direct(DEFAULT_KEY, legacy=True),))
+    verify(db, current)
+    expect(inspect(db) == Counter(ok=4, **{"old-key": 1}),
+           "detect legacy token after otherwise successful migration")
+    db.execute("INSERT INTO user_auth VALUES (3, ?)", (direct(DEFAULT_KEY),))
+    db.execute("INSERT INTO user_auth VALUES (4, ?)", (direct(current),))
+    db.execute("INSERT INTO user_auth VALUES (5, ?)",
+               (direct(DEFAULT_KEY, text=b"short", legacy=True),))
+    db.execute("INSERT INTO user_auth VALUES (6, ?)", ("not base64!",))
+    db.execute("INSERT INTO user_auth VALUES (7, ?)",
+               (base64.b64encode(b"#bm9uZXhpc3RlbnQ#broken").decode(),))
+    db.execute("INSERT INTO user_auth VALUES (8, ?)",
+               (direct(b"an unrelated key"),))
+    db.execute("INSERT INTO user_auth VALUES (9, '')")
+    counts = inspect(db)
+    expect(counts == Counter(ok=4, empty=1, unresolved=4,
+                             **{"old-key": 2, "direct-current-key": 1}),
+           "mixed legacy, direct current, short, missing and damaged secrets")
+    db.close()
+
+    db = scratch_db(current)
+    db.execute("DELETE FROM user_auth")
+    expect(inspect(db) == Counter(ok=1, unresolved=2),
+           "short CFB reference cannot confirm its data key")
+    reported("references=1; referenced secrets do not confirm")
+    reported("key=data_keys[rowid=1].encrypted_data")
+    reported("current=cfb-short-text(bytes=7)")
+    db.execute("DELETE FROM data_source")
+    expect(inspect(db) == Counter(ok=1, **{"unreferenced-key": 1}),
+           "unreferenced CFB data key reported as a verification limitation")
+    reported("referenced=0; unreferenced=2")
+    reported("unresolved breakdown: data-keys=0; secret-fields=0")
+    reported("Migration status is inconclusive")
+    reported("their wrapping keys remain unverified")
+    db.close()
+
+    # Empty ciphertext payloads cannot validate a CFB wrapping key. A
+    # malformed secret using a confirmed key is a different investigation.
+    db = scratch_db(current)
+    db.execute("INSERT INTO user_auth VALUES (2, ?)",
+               (direct(current, text=b""),))
+    wrapped = db.execute("SELECT encrypted_data FROM data_keys").fetchone()[0]
+    key = decrypt(wrapped, current)
+    blob = b"#azE#" + encrypt(b"\x00" * 32, key, "aes-cfb")
+    db.execute("INSERT INTO user_auth VALUES (3, ?)",
+               (base64.b64encode(blob).decode(),))
+    expect(inspect(db) == Counter(ok=4, unresolved=2),
+           "diagnostics preserve conservative validation")
+    reported("current=cfb-empty(bytes=0)")
+    reported("current=cfb-non-text(bytes=32)")
+    reported("secret fails validation under confirmed data key")
+    reported("unresolved breakdown: data-keys=0; secret-fields=2")
+    db.execute("UPDATE data_keys SET provider = 'unsupported'")
+    inspect(db)
+    reported("unsupported wrapping provider")
+    reported("no candidate data keys")
+    db.close()
+
+    db = scratch_db(current)
+    db.execute("UPDATE data_keys SET encrypted_data = ?",
+               (encrypt(os.urandom(16), current, "aes-cfb"),))
+    expect(inspect(db) == Counter(ok=1, unresolved=3),
+           "a rewrapped but incorrect data key cannot validate its secrets")
+    db.close()
+
+    # Every registered Grafana 13 column and each JSON layout is covered;
+    # unrelated text and base64 must not become false secret candidates.
+    db = scratch_db(current)
+    secret = direct(DEFAULT_KEY, legacy=True)
+    for table, columns in AUDIT_COLUMNS.items():
+        db.execute(f'DROP TABLE IF EXISTS "{table}"')
+        definitions = ", ".join(f'"{c}" TEXT' for c in columns)
+        if table == "resource":
+            definitions += ', "group" TEXT, resource TEXT'
+        db.execute(f'CREATE TABLE "{table}" ({definitions})')
+        for column, kind in columns.items():
+            value = secret
+            if kind == "raw":
+                value = base64.b64decode(secret + "=" * (-len(secret) % 4))
+            elif kind == "map":
+                value = json.dumps({"password": secret})
+            elif kind == "sso":
+                value = json.dumps({"servers": [{"bind_password": secret}],
+                                    "client_id": "ordinary text"})
+            elif kind == "alerting":
+                value = json.dumps({"receivers": [{"secureSettings": {
+                    "password": secret}}]})
+            elif kind == "provisioning":
+                value = json.dumps({
+                    "spec": {"github": {"encryptedToken": secret}},
+                    "status": {"webhook": {"encryptedSecret": secret}},
+                })
+            db.execute(f'INSERT INTO "{table}" ("{column}") VALUES (?)',
+                       (value,))
+    db.execute('UPDATE resource SET "group" = ?, resource = ?',
+               ("provisioning.grafana.app", "repositories"))
+    db.execute("INSERT INTO resource VALUES ('not JSON', 'other', 'other')")
+    counts = inspect(db)
+    expect(counts["old-key"] == sum(map(len, AUDIT_COLUMNS.values())) + 1,
+           "all supported secret columns and JSON paths scanned")
+    expect(counts["unresolved"] == 0 and counts["unreferenced-key"] == 1,
+           "unused CFB key is reported separately")
+    db.execute("UPDATE data_source SET secure_json_data = 'not JSON'")
+    expect(inspect(db)["unresolved"] == 1, "malformed JSON is reported")
+
+    # Secrets-manager references are scoped by namespace. Authenticated
+    # GCM accepts binary/empty plaintext, and detects damaged ciphertext.
+    db.executescript("""
+        DROP TABLE secret_data_key;
+        CREATE TABLE secret_data_key (
+            uid TEXT, namespace TEXT, provider TEXT, encrypted_data BLOB);
+        CREATE TABLE secret_encrypted_value (
+            namespace TEXT, data_key_id TEXT, encrypted_data BLOB);
+    """)
+    for namespace, wrapping_key in (("one", current), ("two", DEFAULT_KEY)):
+        key = os.urandom(16)
+        db.execute("INSERT INTO secret_data_key VALUES (?, ?, ?, ?)",
+                   ("same-uid", namespace, "secret_key.v1",
+                    encrypt(key, wrapping_key, "aes-gcm")))
+        for text in (b"", b"\xff\x00"):
+            db.execute("INSERT INTO secret_encrypted_value VALUES (?, ?, ?)",
+                       (namespace, "same-uid", encrypt(text, key, "aes-gcm")))
+    counts = inspect(db)
+    expect(counts["ok"] == 3, "GCM binary/empty and namespaced references")
+    db.execute("UPDATE secret_encrypted_value SET encrypted_data = X'00'")
+    expect(inspect(db)["unresolved"] == counts["unresolved"] + 4,
+           "damaged GCM ciphertext is reported")
+    reported("current=decryption-failed")
+    db.close()
+
+    # Reproduce the reported production counts without any real secrets:
+    # one confirmed key, 897 unreferenced keys, and seven encrypted empties.
+    db = scratch_db(current)
+    db.execute("DELETE FROM secret_data_key")
+    wrapped = db.execute("SELECT encrypted_data FROM data_keys").fetchone()[0]
+    db.executemany("INSERT INTO data_keys VALUES (?, 'secretKey.v1', ?)",
+                   ((f"unused-{i}", wrapped) for i in range(897)))
+    token = db.execute(
+        "SELECT o_auth_refresh_token FROM user_auth"
+    ).fetchone()[0]
+    db.executemany("INSERT INTO user_auth VALUES (?, ?)",
+                   ((i + 2, token) for i in range(221)))
+    key = decrypt(wrapped, current)
+    blob = b"#azE#" + encrypt(b"", key, "aes-cfb")
+    db.executemany("INSERT INTO user_auth VALUES (?, ?)",
+                   ((i + 223, base64.b64encode(blob).decode())
+                    for i in range(7)))
+    db.executemany("INSERT INTO user_auth VALUES (?, '')",
+                   ((i + 230,) for i in range(98)))
+    expect(inspect(db) == Counter(ok=224, empty=98,
+                                  **{"encrypted-empty": 7,
+                                     "unreferenced-key": 897}),
+           "production-shaped results distinguish limitations from failures")
+    reported("consistent with a successful migration")
+    reported("referenced=1; unreferenced=897")
+    reported("unresolved breakdown: data-keys=0; secret-fields=0")
+    reported("audit exit status remains 1")
+    expect(len(messages) < 20, "unreferenced keys summarized without row spam")
+    db.close()
+
+    db = sqlite3.connect(":memory:")
+    expect_refusal(lambda: inspect(db), "unrecognized database")
+    db.execute("CREATE TABLE data_keys (unrecognized TEXT)")
+    expect_refusal(lambda: inspect(db), "unrecognized data-key schema")
+    db.close()
+
+    # Exercise the command's actual read-only connection against a live WAL.
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory)
+        (path / "key").write_bytes(current + b"\n")
+        args = argparse.Namespace(db=str(path / "grafana.db"),
+                                  current=str(path / "key"),
+                                  previous_default=True, previous=None)
+        source = scratch_db(current)
+        source.commit()
+        live = sqlite3.connect(args.db)
+        source.backup(live)
+        source.close()
+        live.execute("PRAGMA journal_mode=WAL")
+        live.execute("INSERT INTO user_auth VALUES (2, ?)", (secret,))
+        live.commit()
+        files = [Path(args.db), Path(args.db + "-wal")]
+        before = [file.read_bytes() for file in files]
+        with contextlib.redirect_stdout(io.StringIO()):
+            expect(run_audit(args) == 1, "audit reads committed WAL findings")
+        expect([file.read_bytes() for file in files] == before,
+               "read-only audit preserves database and WAL bytes")
+        live.execute("DELETE FROM user_auth WHERE id = 2")
+        live.commit()
+        with contextlib.redirect_stdout(io.StringIO()):
+            expect(run_audit(args) == 0, "healthy audit returns zero")
+        wrapped = live.execute(
+            "SELECT encrypted_data FROM data_keys"
+        ).fetchone()[0]
+        key = decrypt(wrapped, current)
+        blob = b"#azE#" + encrypt(b"", key, "aes-cfb")
+        live.execute("INSERT INTO user_auth VALUES (2, ?)",
+                     (base64.b64encode(blob).decode(),))
+        live.commit()
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            expect(run_audit(args) == 1,
+                   "encrypted-empty limitation preserves nonzero exit")
+        expect("consistent with a successful migration" in output.getvalue(),
+               "command summary qualifies successful migration")
+        live.close()
 
 
 def main():
@@ -560,6 +1204,17 @@ def main():
         "self-test",
         help="check the encryption against Grafana's test vectors",
     )
+    audit = commands.add_parser(
+        "audit", help="read-only audit using current and previous keys",
+    )
+    audit.add_argument("--db", required=True, help="grafana.db")
+    audit.add_argument("--current", required=True, metavar="FILE",
+                       help="file holding the current secret_key")
+    previous = audit.add_mutually_exclusive_group(required=True)
+    previous.add_argument("--previous", metavar="FILE",
+                          help="file holding the previous secret_key")
+    previous.add_argument("--previous-default", action="store_true",
+                          help="the previous key was Grafana's public default")
     for name, text in (
         ("check", "check the current key against the database; change "
                   "nothing"),
@@ -589,11 +1244,14 @@ def main():
     try:
         if args.command == "self-test":
             self_test()
+        elif args.command == "audit":
+            return run_audit(args)
         else:
             run(args)
     except (RekeyError, OSError, sqlite3.Error) as error:
-        sys.exit(f"grafana-rekey: {error}")
+        print(f"grafana-rekey: {error}", file=sys.stderr)
+        return 2 if args.command == "audit" else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
