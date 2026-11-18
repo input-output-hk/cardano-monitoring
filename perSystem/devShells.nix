@@ -85,7 +85,9 @@
           :
         elif [ -n "$(${lib.getExe pkgs.gitMinimal} config core.hooksPath)" ]; then
           echo "warning: core.hooksPath is set, so the secrets pre-commit hook is not installed" >&2
-        elif [ -e "$hook" ] && [[ $(readlink "$hook") != /nix/store/* ]]; then
+        # Only refresh our own hook, even if its store path was collected.
+        elif { [ -e "$hook" ] || [ -L "$hook" ]; } &&
+          [[ $(readlink "$hook") != /nix/store/*-check-secrets/bin/check-secrets ]]; then
           echo "warning: $hook exists, so the secrets pre-commit hook is not installed" >&2
         else
           mkdir -p "$(dirname "$hook")"
