@@ -121,6 +121,7 @@
           # intensive loki load
           instance_type = "r9g.2xlarge";
           root_block_device.volume_size = 100;
+          tags.costCenter = "\${var.tag_costCenterLeios}";
         };
 
         monitoring = {

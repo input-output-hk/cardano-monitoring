@@ -90,6 +90,8 @@ with lib; let
     variable = {
       # costCenter tag should remain secret in public repos
       "${self.cluster.infra.generic.costCenter}" = sensitiveString;
+      # Playground monitoring is charged to the Leios cost center.
+      tag_costCenterLeios = sensitiveString;
     };
 
     provider.aws = forEach (attrNames aws.regions) (region: {
