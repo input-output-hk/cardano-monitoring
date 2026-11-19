@@ -82,7 +82,7 @@
     # Defers D-Bus reloads and restarts during the dbus-daemon to dbus-broker
     # migration of NixOS 26.05; see flake/nixosModules/common.nix.
     # Set to false once every machine has upgraded AND rebooted into the broker.
-    nixpkgsUpgrade = true;
+    nixpkgsUpgrade = false;
 
     # Mostly generic key/values used for tagging resources.
     generic = {
