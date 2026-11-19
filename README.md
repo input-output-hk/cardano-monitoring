@@ -16,6 +16,34 @@ While working on the next step, you can already start the devshell using:
 
 This will be done automatically if you are using [direnv](https://direnv.net/).
 
+### NixOS 26.05 upgrade
+
+The flake pins NixOS 26.05 and a refreshed OpenTofu provider registry. Keep
+`system.stateVersion = "23.05"`: it records the original installation's data
+compatibility defaults and is not the OS release selector.
+
+The upgrade includes Grafana 13, Mimir 3, Loki 3.7, and Alloy 1.16. Grafana's
+previous default encryption key is now explicitly preserved because NixOS 26.05
+no longer supplies it. Rotating that key requires a separate migration of
+existing encrypted database settings; do not simply replace it during rollout.
+The [switch-over steps](docs/grafana-secret-key.md) describe that migration.
+See the [NixOS release notes](https://nixos.org/manual/nixos/stable/release-notes.html).
+Mimir keeps its existing single-binary, classic storage architecture; its queue
+limit now uses `query_scheduler.max_outstanding_requests_per_tenant` because
+the old frontend setting was removed in Mimir 3.
+
+Before rolling out, back up Grafana's database and other local service state,
+then deploy and check playground before the other monitoring servers. Check
+ingestion, dashboards, recording rules, and alert delivery after activation and
+after rebooting into the upgraded kernel/initrd.
+
+For OpenTofu, enter the updated development shell and run `tf init -upgrade`
+to refresh any existing local provider lockfile, then review `tf plan` before
+applying infrastructure changes. The AWS provider crosses a major version to
+6.x; offline schema validation does not establish that a live plan is unchanged.
+Provider binaries are selected for the development machine's architecture on
+both supported Linux platforms.
+
 ### General
 
 General information about this cluster is stored in the `flake/cluster.nix`
@@ -105,15 +133,29 @@ Because it has to use the bootstrap SSH key that the AMI was provisioned with.
 Secrets are encrypted using [SOPS](https://github.com/getsops/sops)
 and [KMS](https://aws.amazon.com/kms/).
 
-All secrets live in `./secrets/`
+All secrets live in `./secrets/`, and `.sops.yaml` points sops at the
+cluster's KMS key, so you can create or edit a secret using:
 
-You should be able to edit secrets using:
-
-    sops --kms "$KMS" ./secrets/github-token.enc
+    sops ./secrets/github-token.enc
 
 Or simply decrypt a secret with
 
     sops -d ./secrets/github-token.enc 
+
+Only SOPS-encrypted files belong in `./secrets/`, so never write a decrypted
+secret to a file in the repository: edit with `sops` as above, and send
+`sops -d` output to the terminal or a pipe. Three safeguards back this up:
+
+- Files in `./secrets/` that don't end in `.enc` are ignored by git, so a
+  stray decrypted copy isn't picked up by `git add -A`.
+- The devshell installs a pre-commit hook that refuses to commit any file
+  under `./secrets/` that isn't SOPS-encrypted. It checks what is staged, so
+  after encrypting a file you've already staged, `git add` it again.
+- Hydra runs the same check (`checks.secrets-encrypted`) in its required
+  build, so a pull request containing a plaintext secret can't be merged.
+
+This repository is public: a plaintext secret that reaches GitHub, even on a
+branch, has leaked and must be rotated.
 
 #### Caddy
 
@@ -146,3 +188,85 @@ Finally go to `Administration` -> `Users and access` -> `Users` and set
 permissions on your organisation to `Admin` as well.
 Once you refresh, you can start creating a service account as per the
 instructions in `grafana.tfvars`
+
+#### Grafana secret key
+
+Grafana encrypts the secrets it keeps in its database (contact point keys,
+data source passwords, users' OAuth tokens) under its `secret_key`. Each
+machine has its own key in `secrets/grafana-secret-key-<machine>.enc`, but
+only uses it once `monitoring.grafanaSecretKeyRotated = true` is set for it
+in `flake/colmena.nix`. Until then it keeps Grafana's public default key.
+
+To create a key, run `sops ./secrets/grafana-secret-key-<machine>.enc` and
+replace the example text with the output of `openssl rand -hex 32` (in vim:
+`:r !openssl rand -hex 32`).
+
+A new machine's database starts empty, so it can set
+`monitoring.grafanaSecretKeyRotated` from its first deploy. A machine that
+has already run with the public default key has to be switched over with
+the steps in [docs/grafana-secret-key.md](docs/grafana-secret-key.md),
+which re-encrypt its database first.
+
+After migration, use the read-only `grafana-rekey audit` subcommand to check
+for secrets still using the old key, including legacy values missed by
+`check`. See [the audit instructions](docs/grafana-secret-key.md#audit-an-already-migrated-machine)
+for the command and how to interpret findings. Grafana can keep running.
+
+Don't edit the key file of a machine that uses its key: deploying the change
+restarts Grafana under a key its database isn't encrypted for.
+
+#### External users
+
+Machines with `monitoring.externalUsers.enable = true` show a second
+"Sign in with Google (others)" button for people outside iohk.io, and label
+the iohk.io one "Sign in with Google (Input Output users)". Signing in with
+Google is not enough: the others button only lets in the addresses on these
+allow-lists, with the matching role. Each machine has its own editors and
+viewers lists, e.g. for mainnet:
+
+    sops ./secrets/grafana-external-editors-mainnet.enc
+    sops ./secrets/grafana-external-viewers-mainnet.enc
+
+and the admins list is shared by every machine that sets
+`monitoring.externalUsers.allowAdmins = true`:
+
+    sops ./secrets/grafana-external-admins.enc
+
+Each holds a JSON array of email addresses, e.g. `["alice@example.com"]`,
+or `[]` for none. Addresses must match the Google account's primary address
+exactly, including case. Any Google account with that verified address
+works, including a personal one: someone without a Google account can create
+one with their work address (Create account, For my personal use, Use your
+existing email). Such accounts keep working after the person leaves their
+company, so remove leavers from the lists.
+
+In the editors and viewers lists, `"*@example.com"` (domain in lowercase)
+matches every address at example.com, but only for accounts managed by that
+domain's Google organisation, so that organisation's admins decide who it
+covers.
+Roles are re-applied from the lists at every login, and anyone on none of
+them is refused after the Google sign-in ("IdP did not return a role
+attribute, please contact your administrator"), before Grafana creates a
+user.
+Removing someone stops new logins only; to end an existing session, also
+delete the user in Grafana.
+
+Keep the admins list to the SRE team: an address on it is an org Admin on
+every machine that allows admins, mainnet included. Admins can invite
+password users and create API tokens, which the lists don't control, so when
+removing an admin, also check for those. People with iohk.io accounts sign
+in with the Input Output button instead, which doesn't use these lists.
+
+To enable the button on another machine, copy an existing machine's editors
+and viewers files to the new machine's name (SOPS files are self-contained,
+so `cp` works), `git add` them, and edit them with `sops`.
+
+This button uses its own OAuth client, which belongs to an external
+organisation and is set to External, so that any Google account can use it,
+unless its Workspace admins block third-party apps; the lists above then
+decide who gets into Grafana. Its owners register the `/login/generic_oauth`
+redirect URL of each such machine on it and send us its ID and secret, which
+go in:
+
+    sops ./secrets/grafana-external-oauth-client-id.enc
+    sops ./secrets/grafana-external-oauth-client-secret.enc

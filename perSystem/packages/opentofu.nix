@@ -52,7 +52,7 @@
 
           latest = head stable;
 
-          matching = filter (e: e.os == "linux" && e.arch == "amd64") latest.targets;
+          matching = filter (e: e.os == pkgs.go.GOOS && e.arch == pkgs.go.GOARCH) latest.targets;
           target = head matching;
         in
           mkTerraformProvider {

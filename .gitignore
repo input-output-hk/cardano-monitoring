@@ -8,3 +8,5 @@ cloudformation.*.json
 state.json
 /static/
 /result
+/secrets/*
+!/secrets/*.enc

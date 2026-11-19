@@ -1,0 +1,5 @@
+creation_rules:
+  # The KMS key alias that CloudFormation creates (`just cf state`);
+  # `just kms` prints its ARN.
+  - path_regex: secrets/.*$
+    kms: arn:aws:kms:eu-central-1:463886338519:alias/kmsKey

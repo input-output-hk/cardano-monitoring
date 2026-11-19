@@ -12,7 +12,18 @@
     ...
   }: let
     inherit (builtins) hasAttr toFile;
-    inherit (lib) concatMapStringsSep getExe mkIf optionalString pathExists;
+    inherit (lib) concatMapStringsSep getExe mkForce mkIf optionalString pathExists;
+
+    # The running dbus-daemon cannot complete the notify-reload handshake of
+    # the new dbus-broker unit, so a switch fails with status 4. The broker
+    # takes over at the next boot instead.
+    deferDbusChanges = {
+      reloadIfChanged = mkForce false;
+      restartIfChanged = false;
+    };
+    migratingDbus = self.cluster.infra.nixpkgsUpgrade && config.services.dbus.enable;
+    deferDbus = mkIf migratingDbus deferDbusChanges;
+    deferDbusBroker = mkIf (migratingDbus && config.services.dbus.implementation == "broker") deferDbusChanges;
   in {
     # Where colmena should deploy to, since we do not want to hardcode any IP
     # address, and not every host may have a DNS entry, we instead set this to
@@ -54,7 +65,7 @@
 
     environment = {
       etc."alloy/config.alloy".source = let
-        blackboxPath = (inputs."cardano-${name}") + "/flake/terraform/grafana/blackbox/blackbox.nix-import";
+        blackboxPath = inputs."cardano-${name}" + "/flake/terraform/grafana/blackbox/blackbox.nix-import";
 
         blackboxTarget =
           if (hasAttr "cardano-${name}" inputs && pathExists blackboxPath)
@@ -259,7 +270,7 @@
           }
         '';
       in
-        (pkgs.runCommandNoCCLocal "alloy.config" {} ''
+        (pkgs.runCommandLocal "alloy.config" {} ''
           ${getExe config.services.alloy.package} fmt ${alloyCfg'} > $out
         '')
         .out;
@@ -282,7 +293,7 @@
         gitMinimal
         # More of a comprehensive dashboard than htop, but requires more resources
         # and provides no control
-        glances
+        btop
         helix
         # Easily see what's going on with a machine.
         htop
@@ -318,7 +329,7 @@
       # This token is required for auth-keys-hub. It requires at least org:read
       # permissions to check team membership.
       secrets.github-token = {
-        sopsFile = "${self}/secrets/github-token.enc";
+        sopsFile = ../../secrets/github-token.enc;
         owner = config.programs.auth-keys-hub.user;
         inherit (config.programs.auth-keys-hub) group;
       };
@@ -356,6 +367,12 @@
         RestartSec = "2s";
       };
     };
+
+    # Both unit aliases, in both the system and user scope, need the override.
+    systemd.services.dbus = deferDbus;
+    systemd.services.dbus-broker = deferDbusBroker;
+    systemd.user.services.dbus = deferDbus;
+    systemd.user.services.dbus-broker = deferDbusBroker;
 
     programs = {
       # Used by OpenSSH to allow logins with user keys as published on GitHub.
@@ -470,7 +487,7 @@
     system = {
       # Ensure the nixpgs repo is persisted on the machine itself for easier
       # debugging.
-      extraSystemBuilderCmds = ''
+      systemBuilderCommands = ''
         ln -sv ${pkgs.path} $out/nixpkgs
       '';
 

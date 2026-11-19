@@ -8,6 +8,8 @@
       packages.ssh-config-json = buildPythonPackage {
         pname = "ssh-config-json";
         version = "unstable";
+        pyproject = true;
+        build-system = [setuptools];
         src = pkgs.fetchFromGitHub {
           owner = "tubone24";
           repo = "ssh_config_json";

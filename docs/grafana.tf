@@ -108,38 +108,42 @@ provider "mimir" {
 
 resource "grafana_contact_point" "pagerduty" {
   name     = "pagerduty"
-  provider = "grafana.playground"
-  pagerduty = {
+  provider = grafana.playground
+  pagerduty {
     integration_key = var.pagerduty_api_key
   }
 }
 
 resource "grafana_dashboard" "node_exporter_cpu_and_system" {
-  provider    = "grafana.playground"
-  config_json = "..."
+  provider = grafana.playground
+  # Replace this minimal example with the exported dashboard JSON.
+  config_json = jsonencode({
+    title  = "Node exporter CPU and system"
+    panels = []
+  })
 }
 
 resource "grafana_notification_policy" "policy" {
   contact_point = grafana_contact_point.pagerduty.name
-  provider      = "grafana.playground"
+  provider      = grafana.playground
   group_by = [
     "..."
   ]
 }
 
 resource "mimir_alertmanager_config" "pagerduty" {
-  provider = "mimir.alertmanager"
+  provider = mimir.alertmanager
 
   receiver {
     name = "pagerduty"
-    pagerduty_configs = {
+    pagerduty_configs {
       service_key = var.pagerduty_api_key
     }
   }
 
   receiver {
     name = "deadmanssnitch"
-    webhook_configs = {
+    webhook_configs {
       send_resolved = false
       url           = var.deadmanssnitch_api_url
     }
@@ -170,7 +174,7 @@ resource "mimir_alertmanager_config" "pagerduty" {
 resource "mimir_rule_group_alerting" "deadmanssnitch" {
   name      = "deadmanssnitch"
   namespace = "deadmanssnitch"
-  provider  = "mimir.prometheus"
+  provider  = mimir.prometheus
 
   rule {
     alert = "DeadMansSnitch"
@@ -188,7 +192,7 @@ resource "mimir_rule_group_alerting" "deadmanssnitch" {
 resource "mimir_rule_group_alerting" "nginx_vts" {
   name      = "nginx-vts"
   namespace = "nginx"
-  provider  = "mimir.prometheus"
+  provider  = mimir.prometheus
 
   rule {
     alert = "http_high_internal_error_rate"
