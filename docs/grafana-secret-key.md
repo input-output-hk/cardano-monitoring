@@ -19,10 +19,19 @@ sudo -u grafana grafana-rekey audit \
   --previous-default
 ```
 
-Grafana can keep running. The audit opens SQLite read-only and takes a
-consistent snapshot, including committed WAL contents. It does not update
-secrets, rewrap keys, or make a backup. If the previous key was custom,
-replace `--previous-default` with `--previous /path/to/old-key-file`.
+Grafana can keep running. The audit opens the live database read-only and
+uses SQLite's [incremental backup API](https://www.sqlite.org/backup.html)
+to make a consistent temporary snapshot. Source read locks are held only
+during copy batches; the live connection is closed before decryption starts.
+This works with Grafana's default rollback journal and with WAL if enabled.
+Copying can briefly delay writes, but the cryptographic checks do not hold
+locks on the live database.
+
+The snapshot is a mode-0600 file in a private temporary directory, cleaned
+up after the audit. Allow temporary space for a database-sized copy. The
+audit does not change live secrets or rewrap keys, and retains no backup.
+If the previous key was custom, replace `--previous-default` with
+`--previous /path/to/old-key-file`.
 
 The audit checks both data-key stores and the secret columns handled by
 Grafana 13's secrets migrator, including nested JSON and the secrets
@@ -38,7 +47,7 @@ secret values or keys:
 | `unresolved` | The audit cannot validate the record: possible causes include a missing data key, malformed data, an unsupported provider, a wrong key, or insufficient evidence for AES-CFB. |
 | `ok` | A data key or envelope secret validates with the current key. Only the total is printed. |
 | `empty` | An empty secret field needs no decryption. Only the total is printed. |
-| `encrypted-empty` | A zero-byte CFB payload references a data key confirmed under the current key by other secrets. The empty payload itself cannot validate a key or establish whether the field was always empty. |
+| `encrypted-empty` | An empty encrypted value references a data key confirmed under the current key. This is informational; only the total is printed. |
 | `unreferenced-key` | A CFB data key has no references in the audited columns and its wrapping key remains unverified. These keys are summarized together rather than printed individually. |
 
 The summary separates unresolved data keys from unresolved secret fields
@@ -60,27 +69,38 @@ separately only when its referenced key has been confirmed under the current
 key. Direct empty ciphertext and fields referencing an unconfirmed key
 remain unresolved.
 
-When secret values validate with the current key and the only remaining
-limitations are unreferenced keys or encrypted-empty fields, the audit says:
+Unreferenced historical keys and encrypted-empty fields are expected after
+migration and do not cause a nonzero exit. Grafana can encrypt an empty
+OAuth token, and CFB preserves its length: a zero-byte payload represents
+an empty value. It supplies no evidence about the wrapping key, so the audit
+requires that key to be confirmed independently before counting the value
+as `encrypted-empty`.
+
+SQL NULL and JSON `null` in data-source/plugin secure JSON maps or SSO
+settings are treated as empty containers, matching Grafana's migrator.
+Malformed JSON and other unexpected container types remain findings.
+
+When secret values validate with the current key and there are no findings,
+the audit exits 0 and says:
 
 > Results are consistent with a successful migration: all nonempty audited secret payloads validate with the current key; no old-key use was identified.
 
-It also reports the remaining verification limitations. This statement is
-withheld if any `old-key`, `direct-current-key`, or `unresolved` records
+It also summarizes any unreferenced keys and encrypted-empty fields. The
+success statement is withheld if any `old-key`, `direct-current-key`, or `unresolved` records
 remain. Without any validated secret values, the summary instead says that
 migration status is inconclusive. A clean audit with validated values also
 prints the success statement.
 
 Exit status is **0** when no findings remain in the supported columns,
-**1** when any `old-key`, `direct-current-key`, `unresolved`,
-`unreferenced-key`, or `encrypted-empty` records remain, and **2** when the
-audit cannot complete or its arguments are invalid. The new labels preserve
-the previous conservative exit behavior: a result consistent with successful
-migration still exits 1 if verification limitations remain.
+including when `unreferenced-key` or `encrypted-empty` totals are nonzero;
+**1** when any `old-key`, `direct-current-key`, or `unresolved` records remain;
+and **2** when the audit cannot complete or its arguments are invalid.
+An audit with no secret values to validate can also exit 0, but prints the
+inconclusive summary rather than claiming a successful migration.
 
 AES-GCM authenticates its plaintext. AES-CFB does not: its validation uses
 printable UTF-8, with at least 16 bytes needed to confirm a key. Short direct
-CFB secrets, and CFB data keys without a sufficiently long referenced secret,
+CFB secrets, and referenced CFB data keys without a sufficiently long secret,
 remain unresolved even when they may be healthy. A short envelope secret
 can validate after another secret confirms its data key. These checks
 cannot prove that a previously overwritten secret still has its original
@@ -213,6 +233,10 @@ machine in between.
          grep -i -E 'level=(error|warn).*(decrypt|cipher|secret|data.?key)'
 
    The first `check` should report about as many secrets as step 3 did.
+   `check --from-default` is expected to fail. A healthy audit exits 0 and
+   prints `Results are consistent with a successful migration`, even when
+   unreferenced historical keys or encrypted-empty tokens are reported.
+   Exit 1 requires investigation; exit 2 means the audit did not complete.
    The `check`s test data-key references; the audit also checks for legacy
    secrets they can miss. Interpret its results and AES-CFB limitations as
    described above. A quiet journal alone does not prove decryption works.

@@ -345,7 +345,10 @@ def read_key(path):
     if not path:
         raise RekeyError("the name of the key file is empty")
     # Grafana's $__file{} trims whitespace too.
-    return Path(path).read_text(encoding="utf-8").strip().encode()
+    try:
+        return Path(path).read_text(encoding="utf-8").strip().encode()
+    except UnicodeDecodeError:
+        raise RekeyError("key file is not valid UTF-8") from None
 
 
 # From Grafana 13's pkg/services/secrets/migrator/migrator.go. Restrict
@@ -443,7 +446,9 @@ class SecretAudit:
 
     def result(self, location, status, reason=""):
         self.counts[status] += 1
-        if status not in ("ok", "empty", "unreferenced-key"):
+        if status not in (
+            "ok", "empty", "unreferenced-key", "encrypted-empty",
+        ):
             self.report(f"{status}: {location}: {reason}")
 
     def load_keys(self):
@@ -517,6 +522,9 @@ class SecretAudit:
             return
         try:
             obj = json.loads(value)
+            # Grafana unmarshals null into a nil map in these containers.
+            if obj is None and kind in ("map", "sso"):
+                return
             if not isinstance(obj, dict):
                 raise ValueError
         except (ValueError, TypeError):
@@ -674,9 +682,7 @@ class SecretAudit:
                 "old-key", "direct-current-key", "unresolved",
             )
         ))
-        if any(self.counts[s] for s in (
-            "old-key", "direct-current-key", "unresolved",
-        )):
+        if audit_exit_status(self.counts):
             self.report("Migration needs investigation: see findings above.")
         elif validated_values:
             self.report("Results are consistent with a successful migration: "
@@ -692,14 +698,20 @@ class SecretAudit:
                 "unverified. This alone does not indicate corruption."
             )
         if self.counts["encrypted-empty"]:
-            self.report("Empty CFB payloads cannot establish whether those "
-                        "fields were always empty.")
-        if self.counts["unreferenced-key"] or self.counts["encrypted-empty"]:
-            self.report("Verification limitations remain; "
-                        "audit exit status remains 1.")
+            self.report(
+                f"{self.counts['encrypted-empty']} encrypted-empty fields "
+                "have zero-byte CFB payloads under confirmed current keys; "
+                "these are empty values, not decryption failures."
+            )
         self.report("CFB validation is heuristic, not cryptographic proof. "
-                    "Nothing written.")
+                    "Live database unchanged.")
         return self.counts
+
+
+def audit_exit_status(counts):
+    return int(any(counts[s] for s in (
+        "old-key", "direct-current-key", "unresolved",
+    )))
 
 
 def audit_database(db, current, previous, report=print):
@@ -709,6 +721,23 @@ def audit_database(db, current, previous, report=print):
     audit.load_keys()
     audit.scan_fields()
     return audit.finish()
+
+
+@contextlib.contextmanager
+def audit_snapshot(path):
+    """Copy consistently, then release the live database before decryption."""
+    uri = Path(path).absolute().as_uri() + "?mode=ro"
+    with tempfile.TemporaryDirectory(prefix="grafana-audit-") as directory:
+        target = Path(directory) / "snapshot.db"
+        target.touch(mode=0o600)
+        with contextlib.closing(sqlite3.connect(target)) as snapshot:
+            with contextlib.closing(sqlite3.connect(uri, uri=True)) as source:
+                source.execute("PRAGMA query_only = ON")
+                # No BEGIN here: the backup API releases its read lock
+                # between batches, in rollback-journal and WAL modes alike.
+                source.backup(snapshot, pages=256, sleep=0.05)
+            snapshot.execute("PRAGMA query_only = ON")
+            yield snapshot
 
 
 def run_audit(args):
@@ -721,20 +750,9 @@ def run_audit(args):
         raise RekeyError(
             "run the audit as the database owner (e.g. sudo -u grafana)"
         )
-    uri = Path(args.db).absolute().as_uri() + "?mode=ro"
-    db = sqlite3.connect(uri, uri=True)
-    try:
-        db.execute("PRAGMA query_only = ON")
-        # One consistent view of keys and secrets, including committed WAL
-        # contents. Do not use immutable=1 on a live Grafana database.
-        db.execute("BEGIN")
+    with audit_snapshot(args.db) as db:
         counts = audit_database(db, current, previous)
-    finally:
-        db.close()
-    return int(any(counts[status] for status in (
-        "old-key", "direct-current-key", "unresolved",
-        "unreferenced-key", "encrypted-empty",
-    )))
+    return audit_exit_status(counts)
 
 
 def grafana_state():
@@ -991,6 +1009,7 @@ def audit_self_test():
     verify(db, current)
     expect(inspect(db) == Counter(ok=4, **{"old-key": 1}),
            "detect legacy token after otherwise successful migration")
+    expect(audit_exit_status(inspect(db)) == 1, "old key returns findings")
     db.execute("INSERT INTO user_auth VALUES (3, ?)", (direct(DEFAULT_KEY),))
     db.execute("INSERT INTO user_auth VALUES (4, ?)", (direct(current),))
     db.execute("INSERT INTO user_auth VALUES (5, ?)",
@@ -1005,6 +1024,24 @@ def audit_self_test():
     expect(counts == Counter(ok=4, empty=1, unresolved=4,
                              **{"old-key": 2, "direct-current-key": 1}),
            "mixed legacy, direct current, short, missing and damaged secrets")
+    db.close()
+
+    # SQL NULL, JSON null and empty maps all contain no secrets in Grafana's
+    # map-based data-source, plugin and SSO rotators. Other JSON types fail.
+    db = scratch_db(current)
+    db.executescript("""
+        CREATE TABLE plugin_setting (secure_json_data TEXT);
+        CREATE TABLE sso_setting (settings TEXT);
+        INSERT INTO plugin_setting VALUES ('null');
+        INSERT INTO sso_setting VALUES ('null');
+    """)
+    for value in (None, "null", "{}"):
+        db.execute("UPDATE data_source SET secure_json_data = ?", (value,))
+        expect(inspect(db) == Counter(ok=3), "empty JSON containers skipped")
+    for value in ("[]", '"text"', "42", "true", "{broken"):
+        db.execute("UPDATE data_source SET secure_json_data = ?", (value,))
+        expect(inspect(db) == Counter(ok=3, unresolved=1),
+               "invalid JSON containers remain findings")
     db.close()
 
     db = scratch_db(current)
@@ -1136,15 +1173,18 @@ def audit_self_test():
                     for i in range(7)))
     db.executemany("INSERT INTO user_auth VALUES (?, '')",
                    ((i + 230,) for i in range(98)))
-    expect(inspect(db) == Counter(ok=224, empty=98,
-                                  **{"encrypted-empty": 7,
-                                     "unreferenced-key": 897}),
+    counts = inspect(db)
+    expect(counts == Counter(ok=224, empty=98,
+                             **{"encrypted-empty": 7,
+                                "unreferenced-key": 897}),
            "production-shaped results distinguish limitations from failures")
     reported("consistent with a successful migration")
     reported("referenced=1; unreferenced=897")
     reported("unresolved breakdown: data-keys=0; secret-fields=0")
-    reported("audit exit status remains 1")
-    expect(len(messages) < 20, "unreferenced keys summarized without row spam")
+    expect(audit_exit_status(counts) == 0,
+           "historical keys and confirmed encrypted empties are informational")
+    expect(not any("rowid=" in message for message in messages),
+           "informational records summarized without per-row messages")
     db.close()
 
     db = sqlite3.connect(":memory:")
@@ -1187,14 +1227,95 @@ def audit_self_test():
                      (base64.b64encode(blob).decode(),))
         live.commit()
         with contextlib.redirect_stdout(io.StringIO()) as output:
-            expect(run_audit(args) == 1,
-                   "encrypted-empty limitation preserves nonzero exit")
+            expect(run_audit(args) == 0,
+                   "confirmed encrypted-empty values return zero")
         expect("consistent with a successful migration" in output.getvalue(),
                "command summary qualifies successful migration")
         live.close()
+    audit_io_self_test(current)
 
 
-def main():
+def audit_io_self_test(current):
+    from unittest.mock import patch
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory)
+        keyfile = path / "key"
+        keyfile.write_bytes(current)
+        for mode in ("DELETE", "WAL"):
+            dbfile = path / f"{mode}.db"
+            live = sqlite3.connect(dbfile, timeout=0)
+            source = scratch_db(current)
+            source.commit()
+            source.backup(live)
+            source.close()
+            live.execute(f"PRAGMA journal_mode={mode}")
+            with audit_snapshot(dbfile) as snapshot:
+                copy = Path(snapshot.execute("PRAGMA database_list")
+                            .fetchone()[2])
+                expect(copy.stat().st_mode & 0o077 == 0,
+                       "snapshot file permissions are private")
+                expect(copy.parent.stat().st_mode & 0o077 == 0,
+                       "snapshot directory permissions are private")
+                # Hold an audit read transaction while the live writer
+                # commits without waiting. This fails with the old design
+                # on a rollback-journal database.
+                snapshot.execute("BEGIN")
+                snapshot.execute("SELECT * FROM user_auth").fetchall()
+                live.execute("INSERT INTO user_auth VALUES (2, 'broken')")
+                live.commit()
+                expect(audit_database(snapshot, current, DEFAULT_KEY,
+                                      lambda _: None) == Counter(ok=4),
+                       f"{mode}: snapshot consistent across a live commit")
+                try:
+                    snapshot.execute("DELETE FROM user_auth")
+                except sqlite3.OperationalError:
+                    pass
+                else:
+                    raise RekeyError("self-test: audit snapshot is writable")
+            expect(not copy.parent.exists(), "snapshot removed after audit")
+
+            def interrupted():
+                nonlocal copy
+                with audit_snapshot(dbfile) as snapshot:
+                    copy = Path(snapshot.execute("PRAGMA database_list")
+                                .fetchone()[2])
+                    raise RekeyError("synthetic interruption")
+
+            expect_refusal(interrupted, "interrupted snapshot audit")
+            expect(not copy.parent.exists(), "failed audit snapshot removed")
+            live.close()
+
+        command = ["audit", "--db", str(dbfile), "--current", str(keyfile),
+                   "--previous-default"]
+
+        def invoke():
+            with contextlib.redirect_stderr(io.StringIO()) as stderr:
+                with contextlib.redirect_stdout(io.StringIO()) as stdout:
+                    code = main(command)
+            return code, stderr.getvalue(), stdout.getvalue()
+
+        expect(invoke()[0] == 1, "CLI returns 1 for a malformed secret")
+        keyfile.write_bytes(b"\xffsensitive-key-material")
+        code, error, _ = invoke()
+        expect(code == 2 and "not valid UTF-8" in error,
+               "non-UTF-8 key is an operational error")
+        expect("sensitive-key-material" not in error
+               and "Traceback" not in error,
+               "invalid key error reveals no contents or traceback")
+        keyfile.unlink()
+        expect(invoke()[0] == 2, "missing key is an operational error")
+        keyfile.write_bytes(current)
+        with patch(__name__ + ".run_audit",
+                   side_effect=RuntimeError("sensitive exception detail")):
+            code, error, _ = invoke()
+        expect(code == 2 and "RuntimeError" in error,
+               "unexpected audit exception returns 2")
+        expect("sensitive exception detail" not in error,
+               "unexpected audit exception does not expose values")
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="grafana-rekey",
         description="Re-encrypt Grafana's data keys under a new secret_key.",
@@ -1240,7 +1361,7 @@ def main():
             "--allow-unverified", action="store_true",
             help="go ahead when no secret can confirm the current key",
         )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         if args.command == "self-test":
             self_test()
@@ -1251,6 +1372,14 @@ def main():
     except (RekeyError, OSError, sqlite3.Error) as error:
         print(f"grafana-rekey: {error}", file=sys.stderr)
         return 2 if args.command == "audit" else 1
+    except Exception as error:
+        if args.command != "audit":
+            raise
+        # Unexpected exceptions must not look like findings or expose
+        # secret values through their messages or a traceback.
+        print("grafana-rekey: audit could not complete "
+              f"({type(error).__name__})", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
